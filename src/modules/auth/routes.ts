@@ -1,0 +1,273 @@
+import { FastifyPluginAsync } from "fastify"
+import { SignupEmailSchema, signupEmailSchema, loginEmailSchema, LoginEmailSchema, googleCallbackQuerySchema, SignupOAuthSchema, signupOAuthSchema } from "./schemas.js"
+import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, generateOAuthState, buildGoogleAuthUrl, handleGoogleCallback, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME, signupWithOAuth } from "../../lib/auth.js"
+import { getAvatarPresignedUrl } from "../../lib/image.js"
+import { supabase } from "../../config/supabase.js"
+import env from "../../config/env.js"
+
+
+// signup flow: post to signup -> client gets url, uploads the image -> on success, client makes patch request to /auth/me/avatar with the object key and avatar url
+
+const authRoutes: FastifyPluginAsync = async (app) => {
+    app.post("/signup/email", async (req, res) => {
+
+        const parsedBody: SignupEmailSchema = signupEmailSchema.parse(req.body)
+        const ipAddress = req.ip
+        const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+
+
+        const result = await signupWithEmail({ ...parsedBody }, { ipAddress, userAgent })
+
+        // get avatar presigned url, if chose avatar is true
+        let avatarUrl: string | undefined = undefined
+        let uploadUrl: string | undefined = undefined
+        let objectKey: string | undefined = undefined
+        let contentType: string | undefined = undefined
+        let maxBytes: number | undefined = undefined
+        if (parsedBody.choseAvatar) {
+            const upload = await getAvatarPresignedUrl(result.userId)
+            uploadUrl = upload.uploadUrl
+            avatarUrl = upload.publicUrl
+            objectKey = upload.objectKey
+            contentType = upload.contentType
+            maxBytes = upload.maxBytes
+        }
+
+        res.setCookie("session", result.sessionToken, {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60 * 60 * 24 * 365
+        })
+
+        return res.status(200).send({
+            success: true,
+            result: {
+                user: {
+                    id: result.userId,
+                },
+                avatarUpload: parsedBody.choseAvatar ? {
+                    uploadUrl: uploadUrl,
+                    avatarUrl: avatarUrl,
+                    objectKey: objectKey,
+                    contentType: contentType,
+                    maxBytes: maxBytes,
+                } : null,
+            }
+        })
+    })
+
+    app.patch("/auth/me/avatar", { preHandler: [app.authenticate] }, async (req, res) => {
+        const { objectKey, avatarUrl } = req.body as { objectKey: string, avatarUrl: string }
+
+        if (!objectKey.startsWith(`${req.userId}/avatar-`)) {
+            return res.status(400).send({ error: "Invalid object key" })
+        } // checking against key injection
+
+        const serverUrl = `${env.r2.publicBaseUrl}/avatars/${objectKey}`
+        if (serverUrl !== avatarUrl) {
+            return res.status(400).send({ error: "Invalid avatar url" })
+        } // checking against url injection
+
+        // update supabase
+        const { data, error } = await supabase.schema('authn').from('users').update({ avatar_url: avatarUrl, updated_at: new Date().toISOString() }).eq('id', req.userId)
+        if (error) { return res.status(500).send({ error: error.message }) }
+        return res.status(200).send({
+            success: true,
+            result: {
+                user: {
+                    id: req.userId,
+                }
+            }
+        })
+    })
+
+    app.post("/login/email", async (req, res) => {
+        const parsedBody: LoginEmailSchema = loginEmailSchema.parse(req.body)
+        const ipAddress = req.ip
+        const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+
+        const result = await loginWithEmail(parsedBody.email, parsedBody.password, { ipAddress, userAgent })
+
+        res.setCookie("session", result.sessionToken, {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60 * 60 * 24 * 365
+        })
+
+        return res.status(200).send({
+            success: true,
+            result: {
+                user: {
+                    id: result.userId,
+                }
+            }
+        })
+    })
+
+
+    // oauth
+
+    // get google auth url, and set the state in a temp cookie
+    app.get("/signup/google", async (req, res) => {
+        const state = generateOAuthState()
+        const url = buildGoogleAuthUrl(state)
+
+        res.setCookie("oauth_state", state, {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60 * 10 // 10 min
+        })
+
+        return res.status(200).send({
+            success: true,
+            result: {
+                url: url
+            }
+        })
+    })
+
+    app.get("/signup/google/callback", async (req, res) => {
+
+        const parsedQuery = googleCallbackQuerySchema.parse(req.query)
+        const cookieState = req.cookies[OAUTH_STATE_COOKIE_NAME]
+
+        if (!cookieState || cookieState !== parsedQuery.state) {
+            return res.status(400).send({
+                success: false,
+                error: "Invalid OAuth state",
+            })
+        }
+
+        res.clearCookie(OAUTH_STATE_COOKIE_NAME, {
+            path: "/",
+        })
+
+        const ipAddress = req.ip
+        const userAgent =
+            typeof req.headers["user-agent"] === "string"
+                ? req.headers["user-agent"]
+                : undefined
+
+        const result = await handleGoogleCallback(parsedQuery.code, {
+            ipAddress,
+            userAgent,
+        })
+
+        if (result.kind === "authenticated") {
+            res.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
+                httpOnly: true,
+                secure: env.state === "production",
+                sameSite: "lax",
+                path: "/",
+                maxAge: 60 * 60 * 24 * 365,
+            })
+
+            return res.status(200).send({
+                success: true,
+                result: {
+                    kind: "authenticated",
+                    user: {
+                        id: result.userId,
+                    },
+                },
+            })
+        }
+
+        return res.status(200).send({
+            success: true,
+            result: {
+                kind: "needs_signup",
+                provider: result.provider,
+                signupToken: result.signupToken,
+                email: result.email,
+                avatarUrl: result.avatarUrl,
+            },
+        })
+    })
+
+    app.get("/signup/apple", async (req, res) => {
+        //todo
+    })
+
+    app.get("/signup/apple/callback", async (req, res) => {
+        //todo
+    })
+
+
+    // general signup helper once we get info from oauth provider
+    app.post("/signup/oauth", async (req, res) => {
+
+        const parsedBody = signupOAuthSchema.parse(req.body)
+        const ipAddress = req.ip
+        const userAgent =
+            typeof req.headers["user-agent"] === "string"
+                ? req.headers["user-agent"]
+                : undefined
+
+        // signupwithoauth handles getting the email and avatar url from the oauth table that already exists
+        const result = await signupWithOAuth({
+            provider: parsedBody.provider,
+            signupToken: parsedBody.signupToken,
+            username: parsedBody.username,
+        }, { ipAddress, userAgent })
+
+        res.setCookie(SESSION_COOKIE_NAME, result.sessionToken, {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60 * 60 * 24 * 365,
+        })
+
+        return res.status(200).send({
+            success: true,
+            result: {
+                user: {
+                    id: result.userId
+                }
+            }
+        })
+    })
+
+
+
+
+    app.post("/logout", { preHandler: [app.authenticate] }, async (req, res) => {
+        const token = req.cookies.session
+        if (!token) {
+            return res.status(401).send({ error: "Unauthorized" })
+        }
+
+        await revokeSession(token)
+        res.clearCookie("session", {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+        })
+        return res.status(200).send({
+            success: true,
+        })
+    })
+
+    app.post("/logout/all", { preHandler: [app.authenticate] }, async (req, res) => {
+        await revokeAllUserSessions(req.userId)
+        res.clearCookie("session", {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+        })
+        return res.status(200).send({
+            success: true,
+        })
+    })
+}
+
+export default authRoutes
