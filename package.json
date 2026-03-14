@@ -27,6 +27,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "@supabase/supabase-js": "^2.99.1",
     "argon2": "^0.44.0",
+    "dotenv": "^17.3.1",
     "fastify": "^5.8.2",
     "fastify-plugin": "^5.1.0",
     "jose": "^6.2.1",
