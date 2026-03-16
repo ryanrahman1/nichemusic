@@ -30,7 +30,7 @@ const envSchema = z.object({
         url: z.url(),
         apiKey: z.string(),
     }),
-    port: z.number().default(3932),
+    port: z.coerce.number().default(3932),
     state: z.enum(["development", "production"]).default("development"),
 })
 
@@ -62,7 +62,7 @@ export const env = envSchema.parse({
         url: process.env.NOTIFICATION_WORKER_URL!,
         apiKey: process.env.NOTIFICATION_QUEUE_API_KEY!,
     },
-    port: Number(process.env.PORT) || 3932,
+    port: process.env.PORT,
 })
 
 export default env
