@@ -64,7 +64,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     })
 
     // others
-    app.get('/users/:username', { preHandler: app.authenticate }, async (req, res) => { // TODO: add optional authentication; doesn't matter for now cause its only ios, and ios must be signed in, but once web then yeah
+    app.get('/users/:username', { preHandler: app.optionalAuthenticate }, async (req, res) => { // TODO: add optional authentication; doesn't matter for now cause its only ios, and ios must be signed in, but once web then yeah
         const { username } = req.params as { username: string }
 
         const { data, error } = await supabase.schema('public').from('profiles').select('*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url)').eq('username', username).single()
@@ -77,7 +77,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "USER_NOT_FOUND", "User not found", 404)
         }
 
-        if (data.is_private && data.id !== req.userId) {
+        if (data.is_private && data.id !== req.userId && req.userId !== undefined) {
             const { data: followRow, error: followError } = await supabase
                 .schema("public")
                 .from("follows")
@@ -201,7 +201,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
-    app.get("/users/:username/followers", { preHandler: app.authenticate }, async (req, res) => {
+    app.get("/users/:username/followers", { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { username } = req.params as { username: string }
 
         const { data: otherUser, error: otherUserError } = await supabase
@@ -230,7 +230,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
-    app.get("/users/:username/following", { preHandler: app.authenticate }, async (req, res) => {
+    app.get("/users/:username/following", { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { username } = req.params as { username: string }
 
         const { data: otherUser, error: otherUserError } = await supabase
