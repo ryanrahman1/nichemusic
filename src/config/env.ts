@@ -17,13 +17,18 @@ const envSchema = z.object({
         clientId: z.string(),
         clientSecret: z.string(),
         bundleId: z.string().optional().default("com.nichemusic.app"),
-        redirectUri: z.string().url(),
+        redirectUri: z.url(),
+        musicApiKey: z.string(),
     }),
     r2: z.object({
         accountId: z.string(),
         accessKeyId: z.string(),
         secretAccessKey: z.string(),
         publicBaseUrl: z.string().url(),
+    }),
+    notificationWorker: z.object({
+        url: z.url(),
+        apiKey: z.string(),
     }),
     port: z.number().default(3932),
     state: z.enum(["development", "production"]).default("development"),
@@ -45,12 +50,17 @@ export const env = envSchema.parse({
         clientSecret: process.env.APPLE_CLIENT_SECRET ?? process.env.APPLE_CLIENT_SCECRET ?? "",
         bundleId: process.env.APPLE_BUNDLE_ID,
         redirectUri: process.env.APPLE_REDIRECT_URI!,
+        musicApiKey: process.env.APPLE_MUSIC_API_KEY!,
     },
     r2: {
         accountId: process.env.R2_ACCOUNT_ID!,
         accessKeyId: process.env.R2_ACCESS_KEY_ID!,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
         publicBaseUrl: process.env.R2_PUBLIC_BASE_URL!,
+    },
+    notificationWorker: {
+        url: process.env.NOTIFICATION_WORKER_URL!,
+        apiKey: process.env.NOTIFICATION_QUEUE_API_KEY!,
     },
     port: Number(process.env.PORT) || 3932,
 })

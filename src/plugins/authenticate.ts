@@ -7,6 +7,7 @@ declare module 'fastify' {
     interface FastifyInstance {
         authenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>
         requireAdmin: (req: FastifyRequest, reply: FastifyReply) => Promise<void>
+        optionalAuthenticate: (req: FastifyRequest, reply: FastifyReply) => Promise<void>
     }
     interface FastifyRequest {
         userId: string
@@ -31,4 +32,24 @@ const authenticatePlugin: FastifyPluginAsync = async (app) => {
     })
 }
 
-export default fp(authenticatePlugin)
+const optionalAuthenticatePlugin: FastifyPluginAsync = async (app) => {
+    app.decorate("optionalAuthenticate", async (req: FastifyRequest, rep: FastifyReply) => {
+        const token = req.cookies.session
+        if (!token) {
+            // continue without authentication
+            return
+        }
+        // continue with authentication
+        const session = await authenticateSessionToken(token)
+        if (!session) {
+            // continue without authentication
+            return
+        }
+
+        req.userId = session.userId
+        req.sessionId = session.sessionId
+    })
+}
+
+export const authenticate = fp(authenticatePlugin)
+export const optionalAuthenticate = fp(optionalAuthenticatePlugin)

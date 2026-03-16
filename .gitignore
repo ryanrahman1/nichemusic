@@ -1,2 +1,4 @@
 /node_modules
 .env
+.pnpm-store
+.DS_Store

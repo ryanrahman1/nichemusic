@@ -108,9 +108,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
-
     // oauth
-
     // get google auth url, and set the state in a temp cookie
     app.get("/signup/google", async (req, res) => {
         const state = generateOAuthState()
@@ -199,7 +197,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         //todo
     })
 
-
     // general signup helper once we get info from oauth provider
     app.post("/signup/oauth", async (req, res) => {
 
@@ -235,9 +232,6 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
-
-
-
     app.post("/logout", { preHandler: [app.authenticate] }, async (req, res) => {
         const token = req.cookies.session
         if (!token) {
@@ -267,6 +261,30 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return res.status(200).send({
             success: true,
         })
+    })
+
+    app.get("/me/sessions", { preHandler: app.authenticate }, async (req, res) => {
+        const { data, error } = await supabase.schema('authn').from('sessions').select('id, expires_at, user_agent, created_at, refreshed_at').eq('user_id', req.userId)
+        if (error) { return res.status(500).send({ error: error.message }) }
+        return res.status(200).send({ success: true, result: data })
+    })
+
+    app.post("/me/sessions/:id/revoke", { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = req.params as { id: string }
+        const { data, error } = await supabase.schema('authn').from('sessions').delete().eq('id', id).eq('user_id', req.userId)
+        if (error) { return res.status(500).send({ error: error.message }) }
+        return res.status(200).send({ success: true, result: data })
+    })
+
+    app.post("/me/sessions/all/revoke", { preHandler: app.authenticate }, async (req, res) => {
+        await revokeAllUserSessions(req.userId)
+        res.clearCookie("session", {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+        })
+        return res.status(200).send({ success: true })
     })
 }
 
