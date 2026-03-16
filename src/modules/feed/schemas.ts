@@ -1,5 +1,10 @@
 import { z } from "zod"
 
+export const feedQuerySchema = z.object({
+    cursor: z.string().optional(),
+    limit: z.coerce.number().int().min(1).max(20).default(8),
+})
+
 export const feedEntityTypeSchema = z.enum(["post", "track", "album", "artist", "profile", "feed_item"])
 
 export const feedImpressionSchema = z.object({

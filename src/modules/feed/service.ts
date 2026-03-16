@@ -1,14 +1,12 @@
 import { supabase } from "../../config/supabase.js"
 import { getPostViewerContextMap } from "../posts/helpers.js"
 
-export type FeedMode = "home" | "reels"
-
 export type FeedCursor = {
     offset: number
 }
 
 export type FeedServiceParams = {
-    userId?: string
+    userId?: string | null
     limit: number
     cursor?: string | undefined
 }
@@ -30,7 +28,6 @@ type FeedPostCandidate = {
     has_media: boolean
     has_track: boolean
     has_sound: boolean
-    score?: number
     owner?: { id: string; username: string; avatar_url: string | null } | null
     group?: { id: string; name: string | null } | null
 }
@@ -51,6 +48,7 @@ type FeedItemRow = {
 
 type FeedUserContext = {
     followIds: string[]
+    followerIds: string[]
     groupIds: string[]
     likedPostIds: Set<string>
     repostedPostIds: Set<string>
@@ -59,58 +57,56 @@ type FeedUserContext = {
     likedTrackIds: Set<string>
     savedTrackIds: Set<string>
     fannedArtistIds: Set<string>
-    preferredVideo: boolean
+    openedProfileIds: Set<string>
 }
 
-type RankedFeedEntry =
-    | {
-        type: "post"
-        id: string
-        score: number
-        createdAt: string
-        post: FeedPostCandidate
-    }
-    | {
-        type: "feed_item"
-        id: string
-        score: number
-        createdAt: string
-        item: FeedItemRow
-    }
+type RankedPostEntry = {
+    type: "post"
+    id: string
+    score: number
+    createdAt: string
+    source: "following" | "followers" | "trending" | "recommended"
+    post: FeedPostCandidate
+}
+
+type RankedFeedItemEntry = {
+    type: "feed_item"
+    id: string
+    score: number
+    createdAt: string
+    item: FeedItemRow
+}
+
+type RankedFeedEntry = RankedPostEntry | RankedFeedItemEntry
 
 export const FEED_CONFIG = {
-    home: {
-        candidateLimit: 120,
-        trendingWindowDays: 14,
-        followPostLimit: 60,
-        groupPostLimit: 50,
-        curatedLimit: 20,
+    candidateLimits: {
+        following: 60,
+        followers: 40,
+        trending: 60,
+        recommended: 40,
+        feedItems: 20,
     },
-    reels: {
-        candidateLimit: 120,
-        trendingWindowDays: 14,
-        followPostLimit: 50,
-        groupPostLimit: 40,
-        curatedLimit: 10,
+    recency: {
+        maxHours: 96,
+        weight: 50,
     },
     weights: {
-        recencyMaxHours: 72,
-        recencyWeight: 60,
-        followSourceBoost: 35,
-        groupSourceBoost: 18,
-        trendingSourceBoost: 12,
-        videoKindBoost: 24,
-        preferredVideoBoost: 18,
-        trackAffinityBoost: 28,
-        skipPenalty: 40,
-        viewedPenalty: 6,
-        baseEngagementLike: 1,
-        baseEngagementRepost: 2,
-        baseEngagementComment: 2,
-        baseEngagementView: 0.02,
-        curatedPriorityBase: 1_000_000,
-        curatedPriorityStep: 25_000,
-        curatedFloatingBase: 15,
+        followingBoost: 120,
+        followersBoost: 70,
+        trendingBoost: 35,
+        recommendedBoost: 50,
+        likeWeight: 1,
+        repostWeight: 2,
+        commentWeight: 2,
+        viewWeight: 0.02,
+        videoBoost: 8,
+        trackAffinityBoost: 20,
+        artistAffinityBoost: 16,
+        skipPenalty: 30,
+        viewedPenalty: 5,
+        openedProfilePenalty: 4,
+        floatingFeedItemBase: 25,
     },
 } as const
 
@@ -134,16 +130,25 @@ function hoursSince(iso: string) {
 }
 
 function getRecencyScore(createdAt: string) {
-    const maxHours = FEED_CONFIG.weights.recencyMaxHours
+    const maxHours = FEED_CONFIG.recency.maxHours
     const hours = hoursSince(createdAt)
     if (hours >= maxHours) return 0
-    return ((maxHours - hours) / maxHours) * FEED_CONFIG.weights.recencyWeight
+    return ((maxHours - hours) / maxHours) * FEED_CONFIG.recency.weight
 }
 
-async function getUserFeedContext(userId?: string): Promise<FeedUserContext> {
+function getPostTrackArtistId(content: Record<string, unknown>): string | null {
+    const track = content["track"]
+    if (!track || typeof track !== "object" || Array.isArray(track)) return null
+
+    const artistId = (track as Record<string, unknown>)["artist_id"]
+    return typeof artistId === "string" ? artistId : null
+}
+
+async function getUserFeedContext(userId?: string | null): Promise<FeedUserContext> {
     if (!userId) {
         return {
             followIds: [],
+            followerIds: [],
             groupIds: [],
             likedPostIds: new Set(),
             repostedPostIds: new Set(),
@@ -152,22 +157,25 @@ async function getUserFeedContext(userId?: string): Promise<FeedUserContext> {
             likedTrackIds: new Set(),
             savedTrackIds: new Set(),
             fannedArtistIds: new Set(),
-            preferredVideo: false,
+            openedProfileIds: new Set(),
         }
     }
 
     const [
         followsRes,
+        followersRes,
         groupsRes,
         postLikesRes,
         postRepostsRes,
-        postSkipsRes,
-        postViewsRes,
+        skippedRes,
+        viewedRes,
         trackLikesRes,
         trackSavesRes,
         artistFansRes,
+        profileOpenRes,
     ] = await Promise.all([
         supabase.schema("public").from("follows").select("following_id").eq("follower_id", userId),
+        supabase.schema("public").from("follows").select("follower_id").eq("following_id", userId),
         supabase.schema("public").from("group_members").select("group_id").eq("user_id", userId),
         supabase.schema("public").from("post_likes").select("post_id").eq("liker_id", userId),
         supabase.schema("public").from("post_reposts").select("post_id").eq("reposter_id", userId),
@@ -176,111 +184,93 @@ async function getUserFeedContext(userId?: string): Promise<FeedUserContext> {
         supabase.schema("public").from("track_likes").select("track_id").eq("user_id", userId),
         supabase.schema("public").from("track_saves").select("track_id").eq("user_id", userId),
         supabase.schema("public").from("artist_fans").select("artist_id").eq("user_id", userId),
+        supabase.schema("public").from("feed_events").select("entity_id").eq("user_id", userId).eq("entity_type", "profile").eq("event_type", "open_profile"),
     ])
-
-    const likedTrackIds = new Set((trackLikesRes.data ?? []).map((row) => row.track_id))
-    const savedTrackIds = new Set((trackSavesRes.data ?? []).map((row) => row.track_id))
-    const fannedArtistIds = new Set((artistFansRes.data ?? []).map((row) => row.artist_id))
-
-    const preferredVideo =
-        ((postViewsRes.data ?? []).length + (Array.from(likedTrackIds).length > 0 ? 3 : 0)) > 5
 
     return {
         followIds: (followsRes.data ?? []).map((row) => row.following_id),
+        followerIds: (followersRes.data ?? []).map((row) => row.follower_id),
         groupIds: (groupsRes.data ?? []).map((row) => row.group_id),
         likedPostIds: new Set((postLikesRes.data ?? []).map((row) => row.post_id)),
         repostedPostIds: new Set((postRepostsRes.data ?? []).map((row) => row.post_id)),
-        skippedPostIds: new Set((postSkipsRes.data ?? []).map((row) => row.entity_id)),
-        viewedPostIds: new Set((postViewsRes.data ?? []).map((row) => row.entity_id)),
-        likedTrackIds,
-        savedTrackIds,
-        fannedArtistIds,
-        preferredVideo,
+        skippedPostIds: new Set((skippedRes.data ?? []).map((row) => row.entity_id)),
+        viewedPostIds: new Set((viewedRes.data ?? []).map((row) => row.entity_id)),
+        likedTrackIds: new Set((trackLikesRes.data ?? []).map((row) => row.track_id)),
+        savedTrackIds: new Set((trackSavesRes.data ?? []).map((row) => row.track_id)),
+        fannedArtistIds: new Set((artistFansRes.data ?? []).map((row) => row.artist_id)),
+        openedProfileIds: new Set((profileOpenRes.data ?? []).map((row) => row.entity_id)),
     }
 }
 
-async function fetchJoinedPosts(postIds: string[]) {
-    if (!postIds.length) return []
+async function fetchPostsByOwners(ownerIds: string[], limit: number) {
+    if (!ownerIds.length) return []
 
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
         .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
-        .in("id", postIds)
-
-    if (error) throw new Error(error.message)
-
-    const map = new Map((data ?? []).map((post) => [post.id, post]))
-    return postIds.map((id) => map.get(id)).filter(Boolean) as FeedPostCandidate[]
-}
-
-async function fetchTrendingCandidates(mode: FeedMode) {
-    const { data, error } = await supabase.rpc("get_feed_trending_post_candidates", {
-        window_days: mode === "reels" ? FEED_CONFIG.reels.trendingWindowDays : FEED_CONFIG.home.trendingWindowDays,
-        page_limit: mode === "reels" ? FEED_CONFIG.reels.candidateLimit : FEED_CONFIG.home.candidateLimit,
-        video_only: mode === "reels",
-    })
+        .in("owner_id", ownerIds)
+        .in("visibility", ["public", "private"])
+        .order("created_at", { ascending: false })
+        .limit(limit)
 
     if (error) throw new Error(error.message)
     return (data ?? []) as FeedPostCandidate[]
 }
 
-async function fetchFollowCandidates(userContext: FeedUserContext, mode: FeedMode) {
-    if (!userContext.followIds.length) return []
+async function fetchTrendingPosts(limit: number) {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("posts")
+        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
+        .eq("visibility", "public")
+        .order("like_count", { ascending: false })
+        .order("repost_count", { ascending: false })
+        .order("comment_count", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(limit)
 
-    const limit = mode === "reels" ? FEED_CONFIG.reels.followPostLimit : FEED_CONFIG.home.followPostLimit
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FeedPostCandidate[]
+}
+
+async function fetchRecommendedPosts(ctx: FeedUserContext, limit: number) {
     let query = supabase
         .schema("public")
         .from("posts")
         .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
-        .in("owner_id", userContext.followIds)
+        .eq("visibility", "public")
         .order("created_at", { ascending: false })
-        .limit(limit)
-
-    if (mode === "reels") query = query.eq("kind", "video")
-    if (mode === "home") query = query.in("visibility", ["public", "private"])
+        .limit(limit * 2)
 
     const { data, error } = await query
     if (error) throw new Error(error.message)
 
-    return (data ?? []) as FeedPostCandidate[]
+    const posts = (data ?? []) as FeedPostCandidate[]
+
+    return posts.filter((post) => {
+        if (ctx.followIds.includes(post.owner_id ?? "")) return false
+        if (ctx.followerIds.includes(post.owner_id ?? "")) return false
+        if (ctx.skippedPostIds.has(post.id)) return false
+        return true
+    }).slice(0, limit)
 }
 
-async function fetchGroupCandidates(userContext: FeedUserContext, mode: FeedMode) {
-    if (!userContext.groupIds.length) return []
-
-    const limit = mode === "reels" ? FEED_CONFIG.reels.groupPostLimit : FEED_CONFIG.home.groupPostLimit
-    let query = supabase
-        .schema("public")
-        .from("posts")
-        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
-        .in("group_id", userContext.groupIds)
-        .eq("visibility", "group")
-        .order("created_at", { ascending: false })
-        .limit(limit)
-
-    if (mode === "reels") query = query.eq("kind", "video")
-
-    const { data, error } = await query
-    if (error) throw new Error(error.message)
-
-    return (data ?? []) as FeedPostCandidate[]
-}
-
-async function fetchActiveFeedItems(mode: FeedMode) {
+async function fetchActiveFeedItems() {
     const { data, error } = await supabase
         .schema("public")
         .from("feed_items")
         .select("*")
         .eq("is_active", true)
-        .in("feed_type", [mode, "both"])
+        .in("feed_type", ["home", "both"])
         .order("priority", { ascending: true })
         .order("created_at", { ascending: false })
-        .limit(mode === "reels" ? FEED_CONFIG.reels.curatedLimit : FEED_CONFIG.home.curatedLimit)
+        .limit(FEED_CONFIG.candidateLimits.feedItems)
 
     if (error) throw new Error(error.message)
 
     const now = Date.now()
+
     return ((data ?? []) as FeedItemRow[]).filter((item) => {
         const startsOk = !item.starts_at || new Date(item.starts_at).getTime() <= now
         const endsOk = !item.ends_at || new Date(item.ends_at).getTime() >= now
@@ -288,92 +278,114 @@ async function fetchActiveFeedItems(mode: FeedMode) {
     })
 }
 
-function scorePost(post: FeedPostCandidate, mode: FeedMode, source: "follow" | "group" | "trending", ctx: FeedUserContext) {
+function scorePost(post: FeedPostCandidate, source: RankedPostEntry["source"], ctx: FeedUserContext) {
     let score = 0
 
     score += getRecencyScore(post.created_at)
-    score += post.like_count * FEED_CONFIG.weights.baseEngagementLike
-    score += post.repost_count * FEED_CONFIG.weights.baseEngagementRepost
-    score += post.comment_count * FEED_CONFIG.weights.baseEngagementComment
-    score += post.view_count * FEED_CONFIG.weights.baseEngagementView
+    score += post.like_count * FEED_CONFIG.weights.likeWeight
+    score += post.repost_count * FEED_CONFIG.weights.repostWeight
+    score += post.comment_count * FEED_CONFIG.weights.commentWeight
+    score += post.view_count * FEED_CONFIG.weights.viewWeight
 
-    if (source === "follow") score += FEED_CONFIG.weights.followSourceBoost
-    if (source === "group") score += FEED_CONFIG.weights.groupSourceBoost
-    if (source === "trending") score += FEED_CONFIG.weights.trendingSourceBoost
+    if (source === "following") score += FEED_CONFIG.weights.followingBoost
+    if (source === "followers") score += FEED_CONFIG.weights.followersBoost
+    if (source === "trending") score += FEED_CONFIG.weights.trendingBoost
+    if (source === "recommended") score += FEED_CONFIG.weights.recommendedBoost
 
-    if (mode === "reels" && post.kind === "video") score += FEED_CONFIG.weights.videoKindBoost
-    if (ctx.preferredVideo && post.kind === "video") score += FEED_CONFIG.weights.preferredVideoBoost
+    if (post.kind === "video") score += FEED_CONFIG.weights.videoBoost
 
     if (post.track_id && (ctx.likedTrackIds.has(post.track_id) || ctx.savedTrackIds.has(post.track_id))) {
         score += FEED_CONFIG.weights.trackAffinityBoost
     }
 
+    const artistId = getPostTrackArtistId(post.content)
+    if (artistId && ctx.fannedArtistIds.has(artistId)) score += FEED_CONFIG.weights.artistAffinityBoost
+
     if (ctx.skippedPostIds.has(post.id)) score -= FEED_CONFIG.weights.skipPenalty
     if (ctx.viewedPostIds.has(post.id)) score -= FEED_CONFIG.weights.viewedPenalty
+    if (post.owner_id && ctx.openedProfileIds.has(post.owner_id)) score -= FEED_CONFIG.weights.openedProfilePenalty
 
     return score
 }
 
-function scoreFeedItem(item: FeedItemRow) {
-    if (item.priority >= 1 && item.priority <= 10) {
-        return FEED_CONFIG.weights.curatedPriorityBase - item.priority * FEED_CONFIG.weights.curatedPriorityStep
-    }
-
-    return FEED_CONFIG.weights.curatedFloatingBase + getRecencyScore(item.created_at)
-}
-
-function dedupeAndRankPosts(mode: FeedMode, ctx: FeedUserContext, buckets: { source: "follow" | "group" | "trending"; posts: FeedPostCandidate[] }[]) {
-    const map = new Map<string, RankedFeedEntry>()
+function rankPostBuckets(ctx: FeedUserContext, buckets: { source: RankedPostEntry["source"]; posts: FeedPostCandidate[] }[]) {
+    const map = new Map<string, RankedPostEntry>()
 
     for (const bucket of buckets) {
         for (const post of bucket.posts) {
-            const score = scorePost(post, mode, bucket.source, ctx)
+            const score = scorePost(post, bucket.source, ctx)
             const existing = map.get(post.id)
 
-            if (!existing || existing.type !== "post" || score > existing.score) {
+            if (!existing || score > existing.score) {
                 map.set(post.id, {
                     type: "post",
                     id: post.id,
                     score,
                     createdAt: post.created_at,
+                    source: bucket.source,
                     post,
                 })
             }
         }
     }
 
-    return Array.from(map.values())
-}
-
-function buildRankedFeed(mode: FeedMode, posts: RankedFeedEntry[], feedItems: FeedItemRow[]) {
-    const rankedItems: RankedFeedEntry[] = [
-        ...posts,
-        ...feedItems.map((item) => ({
-            type: "feed_item" as const,
-            id: item.id,
-            score: scoreFeedItem(item),
-            createdAt: item.created_at,
-            item,
-        })),
-    ]
-
-    rankedItems.sort((a, b) => {
+    return Array.from(map.values()).sort((a, b) => {
         if (b.score !== a.score) return b.score - a.score
         const createdDiff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         if (createdDiff !== 0) return createdDiff
         return b.id.localeCompare(a.id)
     })
-
-    if (mode === "reels") {
-        return rankedItems.filter((entry) => entry.type === "feed_item" || (entry.type === "post" && entry.post.kind === "video"))
-    }
-
-    return rankedItems
 }
 
-async function populatePostEntriesWithViewer(userId: string | undefined, entries: RankedFeedEntry[]) {
-    const postIds = entries.filter((entry): entry is Extract<RankedFeedEntry, { type: "post" }> => entry.type === "post").map((entry) => entry.post.id)
-    const viewerMap = await getPostViewerContextMap(userId, postIds)
+function rankFloatingFeedItems(items: FeedItemRow[]) {
+    return items
+        .filter((item) => item.priority === -1)
+        .map((item) => ({
+            type: "feed_item" as const,
+            id: item.id,
+            score: FEED_CONFIG.weights.floatingFeedItemBase + getRecencyScore(item.created_at),
+            createdAt: item.created_at,
+            item,
+        }))
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score
+            return b.id.localeCompare(a.id)
+        })
+}
+
+function injectPriorityFeedItems(posts: RankedPostEntry[], feedItems: FeedItemRow[]) {
+    const priorityItems = feedItems
+        .filter((item) => item.priority >= 1 && item.priority <= 10)
+        .sort((a, b) => a.priority - b.priority)
+
+    const floatingItems = rankFloatingFeedItems(feedItems)
+    const feed: RankedFeedEntry[] = [...posts]
+
+    for (const item of priorityItems) {
+        const entry: RankedFeedItemEntry = {
+            type: "feed_item",
+            id: item.id,
+            score: 10_000_000 - item.priority,
+            createdAt: item.created_at,
+            item,
+        }
+
+        const targetIndex = Math.max(0, item.priority - 1)
+        if (targetIndex >= feed.length) feed.push(entry)
+        else feed.splice(targetIndex, 0, entry)
+    }
+
+    for (const entry of floatingItems) {
+        const insertIndex = Math.min(feed.length, Math.max(5, Math.floor(feed.length * 0.65)))
+        feed.splice(insertIndex, 0, entry)
+    }
+
+    return feed
+}
+
+async function populateViewer(userId: string | null | undefined, entries: RankedFeedEntry[]) {
+    const postIds = entries.filter((entry): entry is RankedPostEntry => entry.type === "post").map((entry) => entry.post.id)
+    const viewerMap = await getPostViewerContextMap(userId ?? undefined, postIds)
 
     return entries.map((entry) => {
         if (entry.type === "feed_item") {
@@ -391,44 +403,35 @@ async function populatePostEntriesWithViewer(userId: string | undefined, entries
     })
 }
 
-async function getFeed(mode: FeedMode, params: FeedServiceParams) {
+export async function getHomeFeed(params: FeedServiceParams) {
     const { userId, limit } = params
     const cursor = decodeFeedCursor(params.cursor)
     const ctx = await getUserFeedContext(userId)
 
-    const [trendingCandidates, followCandidates, groupCandidates, feedItems] = await Promise.all([
-        fetchTrendingCandidates(mode),
-        fetchFollowCandidates(ctx, mode),
-        fetchGroupCandidates(ctx, mode),
-        fetchActiveFeedItems(mode),
+    const [followingPosts, followerPosts, trendingPosts, recommendedPosts, feedItems] = await Promise.all([
+        fetchPostsByOwners(ctx.followIds, FEED_CONFIG.candidateLimits.following),
+        fetchPostsByOwners(ctx.followerIds, FEED_CONFIG.candidateLimits.followers),
+        fetchTrendingPosts(FEED_CONFIG.candidateLimits.trending),
+        fetchRecommendedPosts(ctx, FEED_CONFIG.candidateLimits.recommended),
+        fetchActiveFeedItems(),
     ])
 
-    const trendingIdsNeedingJoin = trendingCandidates.map((post) => post.id)
-    const joinedTrending = await fetchJoinedPosts(trendingIdsNeedingJoin)
-
-    const rankedPosts = dedupeAndRankPosts(mode, ctx, [
-        { source: "trending", posts: joinedTrending },
-        { source: "follow", posts: followCandidates },
-        { source: "group", posts: groupCandidates },
+    const rankedPosts = rankPostBuckets(ctx, [
+        { source: "following", posts: followingPosts },
+        { source: "followers", posts: followerPosts },
+        { source: "trending", posts: trendingPosts },
+        { source: "recommended", posts: recommendedPosts },
     ])
 
-    const rankedFeed = buildRankedFeed(mode, rankedPosts, feedItems)
-    const slice = rankedFeed.slice(cursor.offset, cursor.offset + limit + 1)
+    const fullFeed = injectPriorityFeedItems(rankedPosts, feedItems)
+    const slice = fullFeed.slice(cursor.offset, cursor.offset + limit + 1)
     const hasMore = slice.length > limit
     const pageEntries = hasMore ? slice.slice(0, limit) : slice
-    const items = await populatePostEntriesWithViewer(userId, pageEntries)
+    const items = await populateViewer(userId, pageEntries)
 
     return {
         items,
         nextCursor: hasMore ? encodeFeedCursor({ offset: cursor.offset + limit }) : null,
         hasMore,
     }
-}
-
-export async function getHomeFeed(params: FeedServiceParams) {
-    return getFeed("home", params)
-}
-
-export async function getReelsFeed(params: FeedServiceParams) {
-    return getFeed("reels", params)
 }
