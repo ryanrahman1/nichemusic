@@ -4,6 +4,7 @@ import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, 
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { supabase } from "../../config/supabase.js"
 import env from "../../config/env.js"
+import { sendSuccess } from "../../global/response.js"
 
 
 // signup flow: post to signup -> client gets url, uploads the image -> on success, client makes patch request to /auth/me/avatar with the object key and avatar url
@@ -286,6 +287,12 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
         return res.status(200).send({ success: true })
     })
+
+    app.get("/session", { preHandler: app.authenticate }, async (req, res) => { // quick check if session is valid; if so return true
+
+        return sendSuccess(res, { authenticated: true }) // if the route works then it means that the session check succeeded, so just retunr true
+
+    }) 
 }
 
 export default authRoutes
