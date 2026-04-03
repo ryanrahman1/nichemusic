@@ -17,7 +17,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             .select(`
             *,
             owner:profiles!posts_owner_id_fkey(id, username, avatar_url),
-            group:groups!posts_group_id_fkey(id, name)
+            group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url)
           `)
             .eq("id", id)
             .single()

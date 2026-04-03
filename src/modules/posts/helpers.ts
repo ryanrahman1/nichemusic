@@ -6,6 +6,7 @@ import type { CreatePostSchema, CreatePostContentInputSchema, UpdatePostSchema, 
 type TrackSnapshot = {
     id: string
     source: "spotify" | "apple_music" | "internal" | "deezer"
+    source_id: string | null
     name: string | null
     artwork_url: string | null
     preview_url: string | null
@@ -42,7 +43,7 @@ async function fetchTrackSnapshot(trackId: string): Promise<TrackSnapshot> {
     const { data: track, error: trackError } = await supabase
         .schema("public")
         .from("tracks")
-        .select("id, source, name, artwork_url, preview_url, artist_id, album_id, release_date")
+        .select("id, source, source_id, name, artwork_url, preview_url, artist_id, album_id, release_date")
         .eq("id", trackId)
         .single()
 
@@ -66,6 +67,10 @@ async function fetchTrackSnapshot(trackId: string): Promise<TrackSnapshot> {
     return {
         id: track.id,
         source: track.source,
+        source_id:
+            typeof (track as { source_id?: string | null }).source_id === "string"
+                ? (track as { source_id: string }).source_id
+                : null,
         name: track.name ?? null,
         artwork_url: track.artwork_url ?? null,
         preview_url: track.preview_url ?? null,
@@ -210,6 +215,7 @@ export async function cleanPostForInsert(params: {
             ? {
                 id: trackSnapshot.id,
                 source: trackSnapshot.source,
+                source_id: trackSnapshot.source_id,
                 title: trackSnapshot.name,
                 artist_id: trackSnapshot.artist_id,
                 artist_name: trackSnapshot.artist_name,
@@ -353,6 +359,7 @@ export async function cleanPostForUpdate(params: {
         ? {
             id: trackSnapshot.id,
             source: trackSnapshot.source,
+            source_id: trackSnapshot.source_id,
             title: trackSnapshot.name,
             artist_id: trackSnapshot.artist_id,
             artist_name: trackSnapshot.artist_name,
