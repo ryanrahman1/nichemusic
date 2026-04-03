@@ -208,7 +208,7 @@ async function fetchPostsByOwners(ownerIds: string[], limit: number) {
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url)")
+        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))")
         .in("owner_id", ownerIds)
         .in("visibility", ["public", "private"])
         .order("created_at", { ascending: false })
@@ -222,7 +222,7 @@ async function fetchTrendingPosts(limit: number) {
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url)")
+        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))")
         .eq("visibility", "public")
         .order("like_count", { ascending: false })
         .order("repost_count", { ascending: false })
@@ -238,7 +238,7 @@ async function fetchRecommendedPosts(ctx: FeedUserContext, limit: number) {
     let query = supabase
         .schema("public")
         .from("posts")
-        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url)")
+        .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))")
         .eq("visibility", "public")
         .order("created_at", { ascending: false })
         .limit(limit * 2)
