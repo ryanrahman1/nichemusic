@@ -628,6 +628,19 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
+    app.post('/posts/:id/share', async (req, res) => {
+        const { id } = req.params as { id: string }
+
+        const { error } = await supabase.rpc("share_post", { post_id: id })
+
+        if (error) return sendError(res, "POST_SHARE_FAILED", error.message, 400)
+
+        return sendSuccess(res, { message: "Post shared successfully" }, undefined, 204)
+
+    })
+
+
+
 }
 
 export default postsRoutes
