@@ -18,6 +18,7 @@ import musicRoutes from "./modules/music/routes.js"
 import notificationsRoutes from "./modules/notifications/routes.js"
 import searchRoutes from "./modules/search/routes.js"
 import feedRoutes from "./modules/feed/routes.js"
+import shareRoutes from "./modules/share/routes.js"
 
 
 const isProd = env.state === "production"
@@ -70,5 +71,6 @@ app.register(musicRoutes)
 app.register(notificationsRoutes)
 app.register(searchRoutes)
 app.register(feedRoutes)
+app.register(shareRoutes, { prefix: "/public/share" })
 
 export default app
