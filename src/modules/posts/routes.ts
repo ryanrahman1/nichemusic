@@ -640,6 +640,85 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
     })
 
 
+    app.get("/me/reposts", { preHandler: app.authenticate }, async (req, res) => {
+        const { cursorCreatedAt, cursorId, limit } = postListQuerySchema.parse(req.query)
+
+        let query = supabase
+            .schema("public")
+            .from("post_reposts") // reposter_id, post_id, created_at; no id
+            .select("*, post:posts(*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name))")
+            .eq("reposter_id", req.userId)
+            .order("created_at", { ascending: false })
+            .limit(limit + 1)
+            
+        if (cursorCreatedAt && cursorId) query = query.or(`created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lt.${cursorId})`)
+
+        const { data, error } = await query
+        if (error) return sendError(res, "POSTS_FETCH_FAILED", error.message, 500)
+
+        const rows = data ?? []
+        const hasMore = rows.length > limit
+        const posts = hasMore ? rows.slice(0, limit) : rows
+        const last = posts.at(-1)
+        const viewerMap = await getPostViewerContextMap(
+            req.userId,
+            posts.map((row) => row.post_id).filter((id): id is string => typeof id === "string"),
+        )
+
+        return sendSuccess(res, {
+            posts: posts.map((row) => ({
+                ...row,
+                viewer: viewerMap.get(row.post_id) ?? { isLiked: false, isReposted: false },
+            })),
+        }, {
+            pagination: {
+                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                limit,
+                hasMore,
+            },
+        })
+    })
+
+    app.get("/users/:username/reposts", { preHandler: app.optionalAuthenticate }, async (req, res) => {
+        const { username } = req.params as { username: string }
+        const { cursorCreatedAt, cursorId, limit } = postListQuerySchema.parse(req.query)
+
+        const { data: otherUser, error: otherUserError } = await supabase.schema("public").from("profiles").select("id").eq("username", username).maybeSingle()
+        if (otherUserError) return sendError(res, "USER_LOOKUP_FAILED", otherUserError.message, 500)
+        if (!otherUser) return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+
+        let query = supabase
+            .schema("public")
+            .from("post_reposts")
+            .select("*, post:posts(*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name))")
+            .eq("reposter_id", otherUser.id)
+            .order("created_at", { ascending: false })
+            .limit(limit + 1)
+            
+        if (cursorCreatedAt && cursorId) query = query.or(`created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lt.${cursorId})`)
+
+        const { data, error } = await query
+        if (error) return sendError(res, "POSTS_FETCH_FAILED", error.message, 500)
+
+        const rows = data ?? []
+        const hasMore = rows.length > limit
+        const posts = hasMore ? rows.slice(0, limit) : rows
+        const last = posts.at(-1)
+        const viewerMap = await getPostViewerContextMap(req.userId, posts.map((row) => row.post_id))
+
+        return sendSuccess(res, {
+            posts: posts.map((row) => ({
+                ...row,
+                viewer: viewerMap.get(row.post_id) ?? { isLiked: false, isReposted: false },
+            })),
+        }, {
+            pagination: {
+                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                limit,
+                hasMore,
+            },
+        })
+    })
 
 }
 
