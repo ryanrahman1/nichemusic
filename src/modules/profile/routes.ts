@@ -12,7 +12,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     app.get('/me', { preHandler: [app.authenticate] }, async (req, res) => {
         const userId = req.userId
 
-        const { data, error } = await supabase.schema('public').from('profiles').select('*, profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url)').eq('id', userId).single()
+        const { data, error } = await supabase.schema('public').from('profiles').select('*, profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))').eq('id', userId).single()
 
         if (error) {
             return sendError(res, "PROFILE_FETCH_FAILED", error.message, 500)
@@ -67,7 +67,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     app.get('/users/:username', { preHandler: app.optionalAuthenticate }, async (req, res) => { // TODO: add optional authentication; doesn't matter for now cause its only ios, and ios must be signed in, but once web then yeah
         const { username } = req.params as { username: string }
 
-        const { data, error } = await supabase.schema('public').from('profiles').select('*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url)').eq('username', username).single()
+        const { data, error } = await supabase.schema('public').from('profiles').select('*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))').eq('username', username).single()
 
         if (error) {
             return sendError(res, "PROFILE_FETCH_FAILED", error.message, 500)
