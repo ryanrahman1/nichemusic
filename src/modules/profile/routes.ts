@@ -4,6 +4,7 @@ import { updateProfileSchema } from "./schemas.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { sendFollowNotification, sendFollowRequestNotification } from "../../lib/notifications.js"
+import { profilesForUserIdsOrdered } from "./helpers.js"
 
 
 
@@ -196,9 +197,14 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "FOLLOWERS_FETCH_FAILED", error.message, 500)
         }
 
-        return sendSuccess(res, {
-            followers: data.map((row) => row.follower_id),
-        })
+        const ids = (data ?? []).map((row) => row.follower_id)
+        try {
+            const followers = await profilesForUserIdsOrdered(ids)
+            return sendSuccess(res, { followers })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load followers"
+            return sendError(res, "FOLLOWERS_FETCH_FAILED", message, 500)
+        }
     })
 
     app.get("/users/:username/followers", { preHandler: app.optionalAuthenticate }, async (req, res) => {
@@ -215,9 +221,14 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         if (error) { return sendError(res, "FOLLOWERS_FETCH_FAILED", error.message, 500) }
 
-        return sendSuccess(res, {
-            followers: data.map((row) => row.follower_id),
-        })
+        const ids = (data ?? []).map((row) => row.follower_id)
+        try {
+            const followers = await profilesForUserIdsOrdered(ids)
+            return sendSuccess(res, { followers })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load followers"
+            return sendError(res, "FOLLOWERS_FETCH_FAILED", message, 500)
+        }
     })
 
     app.get("/me/following", { preHandler: app.authenticate }, async (req, res) => {
@@ -225,9 +236,14 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         if (error) { return sendError(res, "FOLLOWING_FETCH_FAILED", error.message, 500) }
 
-        return sendSuccess(res, {
-            following: data.map((row) => row.following_id),
-        })
+        const ids = (data ?? []).map((row) => row.following_id)
+        try {
+            const following = await profilesForUserIdsOrdered(ids)
+            return sendSuccess(res, { following })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load following"
+            return sendError(res, "FOLLOWING_FETCH_FAILED", message, 500)
+        }
     })
 
     app.get("/users/:username/following", { preHandler: app.optionalAuthenticate }, async (req, res) => {
@@ -242,9 +258,14 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         const { data, error } = await supabase.schema('public').from('follows').select('following_id').eq('follower_id', otherUser.id)
         if (error) { return sendError(res, "FOLLOWING_FETCH_FAILED", error.message, 500) }
 
-        return sendSuccess(res, {
-            following: data.map((row) => row.following_id),
-        })
+        const ids = (data ?? []).map((row) => row.following_id)
+        try {
+            const following = await profilesForUserIdsOrdered(ids)
+            return sendSuccess(res, { following })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load following"
+            return sendError(res, "FOLLOWING_FETCH_FAILED", message, 500)
+        }
     })
 
     app.get("/me/blocks", { preHandler: app.authenticate }, async (req, res) => {
