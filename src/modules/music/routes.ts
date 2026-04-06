@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from "fastify"
 import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { supabase } from "../../config/supabase.js"
-import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
+import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, syncAppleArtistDiscography, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
 import { musicLibraryQuerySchema, musicMeQuerySchema, musicFollowingQuerySchema, type Track } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 
@@ -140,6 +140,34 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             })),
         })
     })
+
+    app.post(
+        "/music/apple/artists/:id/load-discography",
+        { preHandler: app.optionalAuthenticate },
+        async (req, res) => {
+            const { id } = req.params as { id: string }
+
+            let artist = await supabase
+                .schema("public")
+                .from("artists")
+                .select("*")
+                .eq("source", "apple_music")
+                .eq("source_id", id)
+                .maybeSingle()
+            if (artist.error)
+                return sendError(res, "MUSIC_ARTIST_FETCH_FAILED", artist.error.message, 500)
+
+            let artistRow = artist.data
+            if (!artistRow) {
+                artistRow = await upsertArtist(id, "apple_music")
+                if (!artistRow)
+                    return sendError(res, "MUSIC_ARTIST_UPSERT_FAILED", "Failed to upsert artist", 500)
+            }
+
+            const summary = await syncAppleArtistDiscography(id)
+            return sendSuccess(res, summary)
+        }
+    )
 
     // social
     app.post('/music/songs/:id/like', { preHandler: app.authenticate }, async (req, res) => { // ACTUAL id, not source_id

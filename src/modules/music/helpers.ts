@@ -30,6 +30,52 @@ export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promis
     }
 }
 
+export type SyncAppleArtistDiscographySummary = {
+    catalogAlbumsSeen: number
+    distinctAlbumsSynced: number
+    albumsTracksLoaded: number
+}
+
+/**
+ * Paginates Apple Music artist albums, upserts each, then loads every album’s tracks.
+ * Heavy — intended for explicit user-triggered sync only.
+ */
+export async function syncAppleArtistDiscography(
+    artistCatalogSourceId: string
+): Promise<SyncAppleArtistDiscographySummary> {
+    const seen = new Set<string>()
+    const albumSourceIds: string[] = []
+    let catalogAlbumsSeen = 0
+    let url: string | null =
+        `${MUSIC_BASE_URL}/artists/${encodeURIComponent(artistCatalogSourceId)}/albums?limit=25`
+    const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
+    while (url) {
+        const result = await fetch(url, { headers })
+        if (!result.ok) break
+        const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
+        for (const al of res.data ?? []) {
+            if (typeof al?.id !== "string") continue
+            catalogAlbumsSeen++
+            await upsertAlbum(al.id, "apple_music")
+            if (!seen.has(al.id)) {
+                seen.add(al.id)
+                albumSourceIds.push(al.id)
+            }
+        }
+        url = resolveAppleCatalogNext(res.next)
+    }
+    let albumsTracksLoaded = 0
+    for (const sid of albumSourceIds) {
+        await syncAppleAlbumTracks(sid)
+        albumsTracksLoaded++
+    }
+    return {
+        catalogAlbumsSeen,
+        distinctAlbumsSynced: albumSourceIds.length,
+        albumsTracksLoaded,
+    }
+}
+
 export async function upsertTrack(trackSourceId: string, source: "apple_music" | "spotify" | "deezer" | "internal"): Promise<Track | null> {
     const { data: existing, error: existingError } = await supabase
         .schema("public")
