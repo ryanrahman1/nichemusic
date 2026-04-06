@@ -4,7 +4,12 @@ import { updateProfileSchema } from "./schemas.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { sendFollowNotification, sendFollowRequestNotification } from "../../lib/notifications.js"
-import { profilesForUserIdsOrdered } from "./helpers.js"
+import {
+    PROFILE_DETAIL_SELECT,
+    getViewerProfileContext,
+    type ViewerProfileContext,
+    profilesForUserIdsOrdered,
+} from "./helpers.js"
 
 
 
@@ -13,7 +18,12 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     app.get('/me', { preHandler: [app.authenticate] }, async (req, res) => {
         const userId = req.userId
 
-        const { data, error } = await supabase.schema('public').from('profiles').select('*, profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))').eq('id', userId).single()
+        const { data, error } = await supabase
+            .schema("public")
+            .from("profiles")
+            .select(PROFILE_DETAIL_SELECT)
+            .eq("id", userId)
+            .single()
 
         if (error) {
             return sendError(res, "PROFILE_FETCH_FAILED", error.message, 500)
@@ -65,10 +75,15 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     })
 
     // others
-    app.get('/users/:username', { preHandler: app.optionalAuthenticate }, async (req, res) => { // TODO: add optional authentication; doesn't matter for now cause its only ios, and ios must be signed in, but once web then yeah
+    app.get("/users/:username", { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { username } = req.params as { username: string }
 
-        const { data, error } = await supabase.schema('public').from('profiles').select('*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))').eq('username', username).single()
+        const { data, error } = await supabase
+            .schema("public")
+            .from("profiles")
+            .select(PROFILE_DETAIL_SELECT)
+            .eq("username", username)
+            .single()
 
         if (error) {
             return sendError(res, "PROFILE_FETCH_FAILED", error.message, 500)
@@ -78,35 +93,38 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "USER_NOT_FOUND", "User not found", 404)
         }
 
-        if (data.is_private && data.id !== req.userId && req.userId !== undefined) {
-            const { data: followRow, error: followError } = await supabase
-                .schema("public")
-                .from("follows")
-                .select("follower_id")
-                .eq("follower_id", req.userId)
-                .eq("following_id", data.id)
-                .maybeSingle()
-
-            if (followError) {
-                return sendError(res, "FOLLOW_CHECK_FAILED", followError.message, 500)
-            }
-
-            if (!followRow) {
-                return sendSuccess(res, {
-                    user: {
-                        id: data.id,
-                        username: data.username,
-                        avatar_url: data.avatar_url,
-                        display_name: data.display_name,
-                        is_private: data.is_private,
-                    },
-                    isFollowing: false,
-                })
+        let viewer: ViewerProfileContext | null = null
+        if (req.userId !== undefined) {
+            try {
+                viewer = await getViewerProfileContext(req.userId, data.id)
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Viewer context failed"
+                return sendError(res, "VIEWER_CONTEXT_FAILED", message, 500)
             }
         }
 
-        return sendSuccess(res, { user: data })
+        const showPrivateTeaser =
+            data.is_private === true &&
+            viewer?.isSelf !== true &&
+            viewer?.isFollowing !== true
 
+        if (showPrivateTeaser) {
+            return sendSuccess(res, {
+                user: {
+                    id: data.id,
+                    username: data.username,
+                    avatar_url: data.avatar_url,
+                    display_name: data.display_name,
+                    is_private: data.is_private,
+                    followers_count: data.followers_count ?? 0,
+                    following_count: data.following_count ?? 0,
+                    posts_count: data.posts_count ?? 0,
+                },
+                viewer,
+            })
+        }
+
+        return sendSuccess(res, { user: data, viewer })
     })
 
     app.post('/users/:username/follow', { preHandler: app.authenticate }, async (req, res) => {

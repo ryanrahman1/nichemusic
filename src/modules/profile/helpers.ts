@@ -2,6 +2,135 @@
 
 import { supabase } from "../../config/supabase.js"
 
+/** Same shape for `GET /me` and full `GET /users/:username` profile rows. */
+export const PROFILE_DETAIL_SELECT =
+    "*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
+
+export type ViewerProfileContext = {
+    isSelf: boolean
+    /** You follow them; `null` when {@link isSelf} (not applicable). */
+    isFollowing: boolean | null
+    /** They follow you. */
+    isFollowedBy: boolean
+    /** You blocked them. */
+    isBlocked: boolean
+    /** They blocked you. */
+    isBlockedBy: boolean
+    /** Pending follow request from you to them (e.g. private account). */
+    outgoingFollowRequest: boolean
+    /** Pending follow request from them to you. */
+    incomingFollowRequest: boolean
+}
+
+/**
+ * Relationship flags between the optional viewer and the profile user.
+ * Call with `viewerId === undefined` for unauthenticated requests (all false, no self).
+ */
+export async function getViewerProfileContext(
+    viewerId: string | undefined,
+    targetUserId: string
+): Promise<ViewerProfileContext> {
+    if (!viewerId) {
+        return {
+            isSelf: false,
+            isFollowing: null,
+            isFollowedBy: false,
+            isBlocked: false,
+            isBlockedBy: false,
+            outgoingFollowRequest: false,
+            incomingFollowRequest: false,
+        }
+    }
+
+    if (viewerId === targetUserId) {
+        return {
+            isSelf: true,
+            isFollowing: null,
+            isFollowedBy: false,
+            isBlocked: false,
+            isBlockedBy: false,
+            outgoingFollowRequest: false,
+            incomingFollowRequest: false,
+        }
+    }
+
+    const [
+        followOut,
+        followIn,
+        blockOut,
+        blockIn,
+        reqOut,
+        reqIn,
+    ] = await Promise.all([
+        supabase
+            .schema("public")
+            .from("follows")
+            .select("follower_id")
+            .eq("follower_id", viewerId)
+            .eq("following_id", targetUserId)
+            .maybeSingle(),
+        supabase
+            .schema("public")
+            .from("follows")
+            .select("follower_id")
+            .eq("follower_id", targetUserId)
+            .eq("following_id", viewerId)
+            .maybeSingle(),
+        supabase
+            .schema("public")
+            .from("blocks")
+            .select("blocker_id")
+            .eq("blocker_id", viewerId)
+            .eq("blocked_id", targetUserId)
+            .maybeSingle(),
+        supabase
+            .schema("public")
+            .from("blocks")
+            .select("blocker_id")
+            .eq("blocker_id", targetUserId)
+            .eq("blocked_id", viewerId)
+            .maybeSingle(),
+        supabase
+            .schema("public")
+            .from("follow_requests")
+            .select("follower_id")
+            .eq("follower_id", viewerId)
+            .eq("following_id", targetUserId)
+            .eq("status", "sent")
+            .maybeSingle(),
+        supabase
+            .schema("public")
+            .from("follow_requests")
+            .select("follower_id")
+            .eq("follower_id", targetUserId)
+            .eq("following_id", viewerId)
+            .eq("status", "sent")
+            .maybeSingle(),
+    ])
+
+    const errors = [
+        followOut.error,
+        followIn.error,
+        blockOut.error,
+        blockIn.error,
+        reqOut.error,
+        reqIn.error,
+    ].filter(Boolean)
+    if (errors.length > 0) {
+        throw new Error(errors[0]!.message)
+    }
+
+    return {
+        isSelf: false,
+        isFollowing: !!followOut.data,
+        isFollowedBy: !!followIn.data,
+        isBlocked: !!blockOut.data,
+        isBlockedBy: !!blockIn.data,
+        outgoingFollowRequest: !!reqOut.data,
+        incomingFollowRequest: !!reqIn.data,
+    }
+}
+
 export type FollowListProfileRow = {
     id: string
     username: string
