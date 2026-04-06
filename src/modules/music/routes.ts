@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from "fastify"
 import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { supabase } from "../../config/supabase.js"
-import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
+import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, syncAppleArtistAlbums, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
 import { musicLibraryQuerySchema, musicMeQuerySchema, musicFollowingQuerySchema, type Track } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 
@@ -77,15 +77,27 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             if (!albumRow) return sendError(res, "MUSIC_ALBUM_UPSERT_FAILED", "Failed to upsert album", 500)
         }
 
-        const [{ data: artist }, viewer] = await Promise.all([
+        await syncAppleAlbumTracks(id)
+
+        const [{ data: artist }, { data: trackRows }, viewer] = await Promise.all([
             albumRow.artist_id ? supabase.schema("public").from("artists").select("*").eq("id", albumRow.artist_id).maybeSingle() : Promise.resolve({ data: null }),
+            supabase.schema("public").from("tracks").select("*").eq("album_id", albumRow.id).order("name", { ascending: true }),
             getAlbumViewerContext(req.userId, albumRow.id),
         ])
+
+        const tracks = trackRows ?? []
+        const trackViewerMap = await getTrackViewerContextMap(req.userId, tracks.map((t) => t.id))
+        const artistName = artist?.name ?? null
 
         return sendSuccess(res, {
             album: albumRow,
             artist: artist ?? null,
             viewer,
+            songs: tracks.map((t) => ({
+                ...t,
+                viewer: trackViewerMap.get(t.id) ?? { isLiked: false, isSaved: false },
+                artist_name: artistName,
+            })),
         })
     })
 
@@ -101,11 +113,46 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             if (!artistRow) return sendError(res, "MUSIC_ARTIST_UPSERT_FAILED", "Failed to upsert artist", 500)
         }
 
-        const viewer = await getArtistViewerContext(req.userId, artistRow.id, artistRow.owner_id)
+        await syncAppleArtistAlbums(id)
+
+        const { data: albumRefs } = await supabase
+            .schema("public")
+            .from("albums")
+            .select("source_id")
+            .eq("artist_id", artistRow.id)
+            .order("release_date", { ascending: false })
+            .limit(12)
+
+        for (const row of albumRefs ?? []) {
+            if (typeof row.source_id === "string" && row.source_id.length > 0)
+                await syncAppleAlbumTracks(row.source_id)
+        }
+
+        const [{ data: albumRows }, { data: trackRows }, viewer] = await Promise.all([
+            supabase.schema("public").from("albums").select("*").eq("artist_id", artistRow.id).order("release_date", { ascending: false }),
+            supabase.schema("public").from("tracks").select("*").eq("artist_id", artistRow.id).order("name", { ascending: true }),
+            getArtistViewerContext(req.userId, artistRow.id, artistRow.owner_id),
+        ])
+
+        const albums = albumRows ?? []
+        const tracks = trackRows ?? []
+        const [albumViewerMap, trackViewerMap] = await Promise.all([
+            getAlbumViewerContextMap(req.userId, albums.map((a) => a.id)),
+            getTrackViewerContextMap(req.userId, tracks.map((t) => t.id)),
+        ])
 
         return sendSuccess(res, {
             artist: artistRow,
             viewer,
+            albums: albums.map((a) => ({
+                ...a,
+                viewer: albumViewerMap.get(a.id) ?? { isLiked: false, isSaved: false },
+            })),
+            songs: tracks.map((t) => ({
+                ...t,
+                viewer: trackViewerMap.get(t.id) ?? { isLiked: false, isSaved: false },
+                artist_name: artistRow.name,
+            })),
         })
     })
 

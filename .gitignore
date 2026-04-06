@@ -2,3 +2,4 @@
 .env
 .pnpm-store
 .DS_Store
+context.sql

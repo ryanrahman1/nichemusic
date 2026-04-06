@@ -4,6 +4,48 @@ import { generateRandomId } from "../../lib/auth.js"
 import env from "../../config/env.js"
 
 const MUSIC_BASE_URL = "https://api.music.apple.com/v1/catalog/us"
+const APPLE_API_ORIGIN = "https://api.music.apple.com"
+
+function resolveAppleCatalogNext(next: unknown): string | null {
+    if (typeof next !== "string" || next.length === 0) return null
+    if (next.startsWith("http://") || next.startsWith("https://")) return next
+    if (next.startsWith("/v1/")) return `${APPLE_API_ORIGIN}${next}`
+    return null
+}
+
+/** Fetches catalog track pages for an album and upserts rows (links `album_id` / `artist_id`). */
+export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promise<void> {
+    let url: string | null =
+        `${MUSIC_BASE_URL}/albums/${encodeURIComponent(albumCatalogSourceId)}/tracks?limit=100`
+    const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
+    while (url) {
+        const result = await fetch(url, { headers })
+        if (!result.ok) break
+        const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
+        const songs = res.data ?? []
+        for (const song of songs) {
+            if (typeof song?.id === "string") await upsertTrack(song.id, "apple_music")
+        }
+        url = resolveAppleCatalogNext(res.next)
+    }
+}
+
+/** Fetches catalog album pages for an artist and upserts rows (links `artist_id`). */
+export async function syncAppleArtistAlbums(artistCatalogSourceId: string): Promise<void> {
+    let url: string | null =
+        `${MUSIC_BASE_URL}/artists/${encodeURIComponent(artistCatalogSourceId)}/albums?limit=25`
+    const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
+    while (url) {
+        const result = await fetch(url, { headers })
+        if (!result.ok) break
+        const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
+        const albums = res.data ?? []
+        for (const al of albums) {
+            if (typeof al?.id === "string") await upsertAlbum(al.id, "apple_music")
+        }
+        url = resolveAppleCatalogNext(res.next)
+    }
+}
 
 export async function upsertTrack(trackSourceId: string, source: "apple_music" | "spotify" | "deezer" | "internal"): Promise<Track | null> {
     const { data: existing, error: existingError } = await supabase
