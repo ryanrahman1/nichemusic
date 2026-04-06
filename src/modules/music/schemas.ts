@@ -44,6 +44,8 @@ export const musicEntityTypeSchema = z.enum(["songs", "albums", "artists"])
 
 export const musicLibraryQuerySchema = z.object({
     cursorScore: z.coerce.number().optional(),
+    /** Tie-breaker for `get_trending_tracks` (with {@link cursorScore} + {@link cursorId}). */
+    cursorCreatedAt: z.string().optional(),
     cursorId: z.string().optional(),
     limit: z.coerce.number().int().min(1).max(50).default(20),
     windowDays: z.coerce.number().int().min(1).max(60).default(14),

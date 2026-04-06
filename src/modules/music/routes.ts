@@ -15,15 +15,24 @@ function firstRow<T>(value: T | T[] | null | undefined): T | null {
 
 const musicRoutes: FastifyPluginAsync = async (app) => {
 
-    app.get('/music/apple/search', { preHandler: app.optionalAuthenticate }, async (req, res) => {
-        const { q } = req.query as { q: string }
-        const result = await fetch(`${MUSIC_BASE_URL}/search?term=${q}&types=songs,albums,artists`, {
+    app.get("/music/apple/search", { preHandler: app.optionalAuthenticate }, async (req, res) => {
+        const { q, types } = req.query as { q: string; types?: string }
+        if (!q || typeof q !== "string" || !q.trim()) {
+            return sendError(res, "MUSIC_SEARCH_QUERY_REQUIRED", "Query `q` is required", 400)
+        }
+        const typesParam =
+            typeof types === "string" && types.trim().length > 0
+                ? types.trim()
+                : "songs,albums,artists"
+        const url = `${MUSIC_BASE_URL}/search?term=${encodeURIComponent(q.trim())}&types=${encodeURIComponent(typesParam)}`
+        const result = await fetch(url, {
             headers: {
-                "Authorization": `Bearer ${env.apple.musicApiKey}`
-            }
+                Authorization: `Bearer ${env.apple.musicApiKey}`,
+            },
         })
 
-        if (!result.ok) return sendError(res, "MUSIC_SEARCH_FAILED", result.statusText, result.status)
+        if (!result.ok)
+            return sendError(res, "MUSIC_SEARCH_FAILED", result.statusText, result.status)
 
         const data = await result.json()
         return sendSuccess(res, { data })
@@ -256,12 +265,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
     })
 
     app.get("/music/library/songs", { preHandler: [app.optionalAuthenticate] }, async (req, res) => {
-        const { cursorScore, cursorId, limit, windowDays } = musicLibraryQuerySchema.parse(req.query)
+        const { cursorScore, cursorCreatedAt, cursorId, limit, windowDays } =
+            musicLibraryQuerySchema.parse(req.query)
 
         const { data, error } = await supabase.rpc("get_trending_tracks", {
             window_days: windowDays,
             page_limit: limit,
             cursor_score: cursorScore ?? null,
+            cursor_created_at: cursorCreatedAt ?? null,
             cursor_id: cursorId ?? null,
         })
 
@@ -274,7 +285,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { songs: items }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorScore: last.score, cursorId: last.id }) : null,
+                nextCursor:
+                    hasMore && last
+                        ? JSON.stringify({
+                              cursorScore: last.score,
+                              cursorCreatedAt: last.created_at,
+                              cursorId: last.id,
+                          })
+                        : null,
                 limit,
                 hasMore,
             },
