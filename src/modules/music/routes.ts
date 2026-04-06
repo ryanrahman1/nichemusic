@@ -2,7 +2,7 @@ import { FastifyPluginAsync } from "fastify"
 import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { supabase } from "../../config/supabase.js"
-import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, syncAppleArtistAlbums, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
+import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap } from "./helpers.js"
 import { musicLibraryQuerySchema, musicMeQuerySchema, musicFollowingQuerySchema, type Track } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 
@@ -111,21 +111,6 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
         if (!artistRow) {
             artistRow = await upsertArtist(id, "apple_music")
             if (!artistRow) return sendError(res, "MUSIC_ARTIST_UPSERT_FAILED", "Failed to upsert artist", 500)
-        }
-
-        await syncAppleArtistAlbums(id)
-
-        const { data: albumRefs } = await supabase
-            .schema("public")
-            .from("albums")
-            .select("source_id")
-            .eq("artist_id", artistRow.id)
-            .order("release_date", { ascending: false })
-            .limit(12)
-
-        for (const row of albumRefs ?? []) {
-            if (typeof row.source_id === "string" && row.source_id.length > 0)
-                await syncAppleAlbumTracks(row.source_id)
         }
 
         const [{ data: albumRows }, { data: trackRows }, viewer] = await Promise.all([

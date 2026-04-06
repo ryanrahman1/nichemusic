@@ -30,23 +30,6 @@ export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promis
     }
 }
 
-/** Fetches catalog album pages for an artist and upserts rows (links `artist_id`). */
-export async function syncAppleArtistAlbums(artistCatalogSourceId: string): Promise<void> {
-    let url: string | null =
-        `${MUSIC_BASE_URL}/artists/${encodeURIComponent(artistCatalogSourceId)}/albums?limit=25`
-    const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
-    while (url) {
-        const result = await fetch(url, { headers })
-        if (!result.ok) break
-        const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
-        const albums = res.data ?? []
-        for (const al of albums) {
-            if (typeof al?.id === "string") await upsertAlbum(al.id, "apple_music")
-        }
-        url = resolveAppleCatalogNext(res.next)
-    }
-}
-
 export async function upsertTrack(trackSourceId: string, source: "apple_music" | "spotify" | "deezer" | "internal"): Promise<Track | null> {
     const { data: existing, error: existingError } = await supabase
         .schema("public")
