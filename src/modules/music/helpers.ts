@@ -14,13 +14,13 @@ function resolveAppleCatalogNext(next: unknown): string | null {
 }
 
 /** Fetches catalog track pages for an album and upserts rows (links `album_id` / `artist_id`). */
-export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promise<void> {
+export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promise<boolean> {
     let url: string | null =
         `${MUSIC_BASE_URL}/albums/${encodeURIComponent(albumCatalogSourceId)}/tracks?limit=100`
     const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
     while (url) {
         const result = await fetch(url, { headers })
-        if (!result.ok) break
+        if (!result.ok) return false
         const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
         const songs = res.data ?? []
         for (const song of songs) {
@@ -28,12 +28,15 @@ export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promis
         }
         url = resolveAppleCatalogNext(res.next)
     }
+    return true
 }
 
 export type SyncAppleArtistDiscographySummary = {
     catalogAlbumsSeen: number
     distinctAlbumsSynced: number
     albumsTracksLoaded: number
+    /** All Apple Music catalog requests for this run completed without HTTP failure. */
+    syncSucceeded: boolean
 }
 
 /**
@@ -49,9 +52,13 @@ export async function syncAppleArtistDiscography(
     let url: string | null =
         `${MUSIC_BASE_URL}/artists/${encodeURIComponent(artistCatalogSourceId)}/albums?limit=25`
     const headers = { Authorization: `Bearer ${env.apple.musicApiKey}` }
+    let artistCatalogSyncOk = true
     while (url) {
         const result = await fetch(url, { headers })
-        if (!result.ok) break
+        if (!result.ok) {
+            artistCatalogSyncOk = false
+            break
+        }
         const res = (await result.json()) as { data?: { id?: string }[]; next?: unknown }
         for (const al of res.data ?? []) {
             if (typeof al?.id !== "string") continue
@@ -65,14 +72,18 @@ export async function syncAppleArtistDiscography(
         url = resolveAppleCatalogNext(res.next)
     }
     let albumsTracksLoaded = 0
+    let albumTracksSyncOk = true
     for (const sid of albumSourceIds) {
-        await syncAppleAlbumTracks(sid)
+        const tracksOk = await syncAppleAlbumTracks(sid)
+        if (!tracksOk) albumTracksSyncOk = false
         albumsTracksLoaded++
     }
+    const syncSucceeded = artistCatalogSyncOk && albumTracksSyncOk
     return {
         catalogAlbumsSeen,
         distinctAlbumsSynced: albumSourceIds.length,
         albumsTracksLoaded,
+        syncSucceeded,
     }
 }
 

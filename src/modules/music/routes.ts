@@ -77,8 +77,6 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             if (!albumRow) return sendError(res, "MUSIC_ALBUM_UPSERT_FAILED", "Failed to upsert album", 500)
         }
 
-        await syncAppleAlbumTracks(id)
-
         const [{ data: artist }, { data: trackRows }, viewer] = await Promise.all([
             albumRow.artist_id ? supabase.schema("public").from("artists").select("*").eq("id", albumRow.artist_id).maybeSingle() : Promise.resolve({ data: null }),
             supabase.schema("public").from("tracks").select("*").eq("album_id", albumRow.id).order("name", { ascending: true }),
@@ -100,6 +98,33 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             })),
         })
     })
+
+    app.post(
+        "/music/apple/albums/:id/sync-tracks",
+        { preHandler: app.optionalAuthenticate },
+        async (req, res) => {
+            const { id } = req.params as { id: string }
+
+            let album = await supabase
+                .schema("public")
+                .from("albums")
+                .select("*")
+                .eq("source", "apple_music")
+                .eq("source_id", id)
+                .maybeSingle()
+            if (album.error)
+                return sendError(res, "MUSIC_ALBUM_FETCH_FAILED", album.error.message, 500)
+
+            if (!album.data) {
+                const inserted = await upsertAlbum(id, "apple_music")
+                if (!inserted)
+                    return sendError(res, "MUSIC_ALBUM_UPSERT_FAILED", "Failed to upsert album", 500)
+            }
+
+            const syncSucceeded = await syncAppleAlbumTracks(id)
+            return sendSuccess(res, { syncSucceeded })
+        }
+    )
 
     app.get('/music/apple/artists/:id', { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { id } = req.params as { id: string }
@@ -165,6 +190,20 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
             }
 
             const summary = await syncAppleArtistDiscography(id)
+            if (summary.syncSucceeded) {
+                const { error: updateError } = await supabase
+                    .schema("public")
+                    .from("artists")
+                    .update({ has_full_discography: true })
+                    .eq("id", artistRow.id)
+                if (updateError)
+                    return sendError(
+                        res,
+                        "MUSIC_ARTIST_DISCOGRAPHY_FLAG_FAILED",
+                        updateError.message,
+                        500
+                    )
+            }
             return sendSuccess(res, summary)
         }
     )
