@@ -300,12 +300,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
     })
 
     app.get("/music/library/albums", { preHandler: [app.optionalAuthenticate] }, async (req, res) => {
-        const { cursorScore, cursorId, limit, windowDays } = musicLibraryQuerySchema.parse(req.query)
+        const { cursorScore, cursorCreatedAt, cursorId, limit, windowDays } =
+            musicLibraryQuerySchema.parse(req.query)
 
         const { data, error } = await supabase.rpc("get_trending_albums", {
             window_days: windowDays,
             page_limit: limit,
             cursor_score: cursorScore ?? null,
+            cursor_created_at: cursorCreatedAt ?? null,
             cursor_id: cursorId ?? null,
         })
 
@@ -318,7 +320,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { albums: items }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorScore: last.score, cursorId: last.id }) : null,
+                nextCursor:
+                    hasMore && last
+                        ? JSON.stringify({
+                              cursorScore: last.score,
+                              cursorCreatedAt: last.created_at,
+                              cursorId: last.id,
+                          })
+                        : null,
                 limit,
                 hasMore,
             },
@@ -326,12 +335,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
     })
 
     app.get("/music/library/artists", { preHandler: [app.optionalAuthenticate] }, async (req, res) => {
-        const { cursorScore, cursorId, limit, windowDays } = musicLibraryQuerySchema.parse(req.query)
+        const { cursorScore, cursorCreatedAt, cursorId, limit, windowDays } =
+            musicLibraryQuerySchema.parse(req.query)
 
         const { data, error } = await supabase.rpc("get_trending_artists", {
             window_days: windowDays,
             page_limit: limit,
             cursor_score: cursorScore ?? null,
+            cursor_created_at: cursorCreatedAt ?? null,
             cursor_id: cursorId ?? null,
         })
 
@@ -344,7 +355,14 @@ const musicRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { artists: items }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorScore: last.score, cursorId: last.id }) : null,
+                nextCursor:
+                    hasMore && last
+                        ? JSON.stringify({
+                              cursorScore: last.score,
+                              cursorCreatedAt: last.created_at,
+                              cursorId: last.id,
+                          })
+                        : null,
                 limit,
                 hasMore,
             },
