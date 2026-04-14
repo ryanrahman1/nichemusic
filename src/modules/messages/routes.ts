@@ -28,6 +28,102 @@ function uniqueStrings(values: Array<string | null | undefined>) {
     return [...new Set(values.filter((v): v is string => Boolean(v)))]
 }
 
+const TRACK_ENTITY_SELECT = `
+                  id,
+                  name,
+                  source,
+                  source_id,
+                  artwork_url,
+                  preview_url,
+                  artist_id,
+                  album_id,
+                  artists (
+                    id,
+                    name,
+                    image_url
+                  ),
+                  albums (
+                    id,
+                    name,
+                    artwork_url
+                  )
+                `
+
+const ALBUM_ENTITY_SELECT = `
+                  id,
+                  name,
+                  source,
+                  source_id,
+                  artwork_url,
+                  artist_id,
+                  artists (
+                    id,
+                    name,
+                    image_url
+                  )
+                `
+
+const ARTIST_ENTITY_SELECT = `
+                  id,
+                  name,
+                  source,
+                  source_id,
+                  image_url
+                `
+
+type InsertedMessage = Record<string, unknown> & {
+    sender_id: string
+    kind: string
+    content: unknown
+}
+
+/** Attach sender + resolved entity for share kinds (matches GET /conversations/:id). */
+async function enrichOutboundMessage(msg: InsertedMessage): Promise<Record<string, unknown>> {
+    const { data: sender } = await supabase
+        .from('profiles')
+        .select('id, username, display_name, avatar_url, is_verified, verification_type')
+        .eq('id', msg.sender_id)
+        .maybeSingle()
+
+    let entity: unknown = null
+    const content =
+        msg.content && typeof msg.content === 'object' && !Array.isArray(msg.content)
+            ? (msg.content as Record<string, unknown>)
+            : null
+
+    if (msg.kind === 'track_share' && content && typeof content.trackId === 'string') {
+        const { data } = await supabase
+            .from('tracks')
+            .select(TRACK_ENTITY_SELECT)
+            .eq('id', content.trackId)
+            .maybeSingle()
+        entity = data
+    } else if (msg.kind === 'album_share' && content && typeof content.albumId === 'string') {
+        const { data } = await supabase
+            .from('albums')
+            .select(ALBUM_ENTITY_SELECT)
+            .eq('id', content.albumId)
+            .maybeSingle()
+        entity = data
+    } else if (msg.kind === 'artist_share' && content && typeof content.artistId === 'string') {
+        const { data } = await supabase
+            .from('artists')
+            .select(ARTIST_ENTITY_SELECT)
+            .eq('id', content.artistId)
+            .maybeSingle()
+        entity = data
+    } else if (msg.kind === 'profile_share' && content && typeof content.userId === 'string') {
+        const { data } = await supabase
+            .from('profiles')
+            .select('id, username, display_name, avatar_url, is_verified, verification_type')
+            .eq('id', content.userId)
+            .maybeSingle()
+        entity = data
+    }
+
+    return { ...msg, sender: sender ?? null, entity }
+}
+
 async function findDirectConversationId(userA: string, userB: string): Promise<string | null> {
     const { data: mine, error } = await supabase
         .from("conversation_members")
@@ -191,6 +287,8 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
             throw msgError
         }
 
+        const msgOut = await enrichOutboundMessage(msg as InsertedMessage)
+
         // update conversation last message
         await supabase.from('conversations').update({
             last_message_id: msg.id,
@@ -205,7 +303,7 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
         const event = {
             type: 'message_created',
             conversationId,
-            msg
+            msg: msgOut,
         }
 
         // emit to all members (including sender for multidevice sync)
@@ -218,7 +316,7 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
             const isOnline = hasActiveSocket(recipientId)
         }
 
-        return sendSuccess(res, { message: msg })
+        return sendSuccess(res, { message: msgOut })
 
 
     })
@@ -475,50 +573,21 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
             trackIds.length > 0
                 ? supabase
                     .from('tracks')
-                    .select(`
-                  id,
-                  name,
-                  source,
-                  source_id,
-                  artwork_url,
-                  preview_url,
-                  artist_id,
-                  album_id,
-                  artists (
-                    id,
-                    name,
-                    image_url
-                  ),
-                  albums (
-                    id,
-                    name,
-                    artwork_url
-                  )
-                `)
+                    .select(TRACK_ENTITY_SELECT)
                     .in('id', trackIds)
                 : Promise.resolve({ data: [], error: null }),
 
             albumIds.length > 0
                 ? supabase
                     .from('albums')
-                    .select(`
-                  id,
-                  name,
-                  artwork_url,
-                  artist_id,
-                  artists (
-                    id,
-                    name,
-                    image_url
-                  )
-                `)
+                    .select(ALBUM_ENTITY_SELECT)
                     .in('id', albumIds)
                 : Promise.resolve({ data: [], error: null }),
 
             artistIds.length > 0
                 ? supabase
                     .from('artists')
-                    .select('id, name, image_url')
+                    .select(ARTIST_ENTITY_SELECT)
                     .in('id', artistIds)
                 : Promise.resolve({ data: [], error: null }),
         ])
