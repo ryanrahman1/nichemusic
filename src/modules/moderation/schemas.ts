@@ -1,7 +1,6 @@
 import { string, z } from "zod"
 
 export const createReportSchema = z.object({
-    reporterId: z.string().nullable(),
     targetType: z.enum(["user", "post", "comment", "message", "group", "track", "album", "artist", "other"]),
     targetId: string(),
     content: z.object({}), //jsonb

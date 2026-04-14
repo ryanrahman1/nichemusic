@@ -11,7 +11,7 @@ const moderationRoutes: FastifyPluginAsync = async (app) => {
         const reportId = generateRandomId(16)
         const { data, error } = await supabase.schema("public").from("reports").insert({
             id: reportId,
-            reporter_id: parsedBody.reporterId,
+            reporter_id: req.userId,
             target_type: parsedBody.targetType,
             target_id: parsedBody.targetId,
             content: parsedBody.content,

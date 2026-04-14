@@ -181,3 +181,135 @@ export async function checkFollowing(userId: string, otherUserId: string) {
     if (error) { throw new Error(error.message) }
     if (!data) { return false } else { return true }
 }
+
+/** Normalized friend row for the Friends tab activity carousel (camelCase JSON). */
+export type FriendActivityItem = {
+    userId: string
+    username: string
+    displayName: string | null
+    avatarUrl: string | null
+    kind: "music" | "text"
+    updatedAt: string | null
+    track: {
+        id: string
+        name: string
+        artistName: string | null
+        artworkUrl: string | null
+    } | null
+    text: string | null
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+    if (v == null) return null
+    if (Array.isArray(v)) {
+        const first = v[0]
+        return first != null && typeof first === "object" && !Array.isArray(first)
+            ? (first as Record<string, unknown>)
+            : null
+    }
+    if (typeof v === "object") return v as Record<string, unknown>
+    return null
+}
+
+function pickString(v: unknown): string | null {
+    if (typeof v !== "string") return null
+    const t = v.trim()
+    return t.length > 0 ? t : null
+}
+
+function artistNameFromEmbed(artist: unknown): string | null {
+    const o = asRecord(artist)
+    if (!o) return null
+    return pickString(o.name)
+}
+
+function profileSongTrackFromRow(ps: unknown): FriendActivityItem["track"] {
+    const o = asRecord(ps)
+    if (!o) return null
+    const id = pickString(o.id)
+    const name = pickString(o.name)
+    if (!id || !name) return null
+    return {
+        id,
+        name,
+        artistName: artistNameFromEmbed(o.artist),
+        artworkUrl: pickString(o.artwork_url),
+    }
+}
+
+function statusTextFromUserStatus(us: Record<string, unknown> | null): string | null {
+    if (!us) return null
+    for (const key of ["text", "body", "note", "message", "content"] as const) {
+        const t = pickString(us[key])
+        if (t) return t
+    }
+    return null
+}
+
+function maxIso(a: string | null, b: string | null): string | null {
+    if (!a) return b
+    if (!b) return a
+    return new Date(a).getTime() >= new Date(b).getTime() ? a : b
+}
+
+/**
+ * Maps `profiles` rows (same shape as {@link PROFILE_DETAIL_SELECT}) into activity cards.
+ * Prefers a profile song for the “music” card; otherwise uses a non-empty `user_status` text field.
+ */
+export function buildFriendActivitiesFromProfileRows(rows: unknown[]): FriendActivityItem[] {
+    const out: FriendActivityItem[] = []
+    for (const raw of rows) {
+        const row = asRecord(raw)
+        if (!row) continue
+        const userId = pickString(row.id)
+        const username = pickString(row.username)
+        if (!userId || !username) continue
+
+        const displayName = pickString(row.display_name)
+        const avatarUrl = pickString(row.avatar_url)
+        const profileUpdated = pickString(row.updated_at)
+
+        const us = asRecord(row.user_status)
+        const statusText = statusTextFromUserStatus(us)
+        const statusUpdated = maxIso(pickString(us?.updated_at), pickString(us?.created_at))
+
+        const track = profileSongTrackFromRow(row.profile_song)
+
+        let kind: FriendActivityItem["kind"] | null = null
+        let text: string | null = null
+        let trackOut: FriendActivityItem["track"] = null
+
+        if (track) {
+            kind = "music"
+            trackOut = track
+            text = null
+        } else if (statusText) {
+            kind = "text"
+            text = statusText
+            trackOut = null
+        }
+
+        if (!kind) continue
+
+        const updatedAt = maxIso(statusUpdated, profileUpdated)
+
+        out.push({
+            userId,
+            username,
+            displayName,
+            avatarUrl,
+            kind,
+            updatedAt,
+            track: trackOut,
+            text,
+        })
+    }
+
+    out.sort((a, b) => {
+        const ta = a.updatedAt ? new Date(a.updatedAt).getTime() : 0
+        const tb = b.updatedAt ? new Date(b.updatedAt).getTime() : 0
+        return tb - ta
+    })
+
+    return out
+}

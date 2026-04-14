@@ -6,6 +6,7 @@ import { sendError, sendSuccess } from "../../global/response.js"
 import { sendFollowNotification, sendFollowRequestNotification } from "../../lib/notifications.js"
 import {
     PROFILE_DETAIL_SELECT,
+    buildFriendActivitiesFromProfileRows,
     getViewerProfileContext,
     type ViewerProfileContext,
     profilesForUserIdsOrdered,
@@ -297,6 +298,43 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         const { data, error } = await supabase.schema('public').from('friends').select('user_a_id, user_b_id').or(`user_a_id.eq.${req.userId},user_b_id.eq.${req.userId}`)
         if (error) { return sendError(res, "FRIENDS_FETCH_FAILED", error.message, 500) }
         return sendSuccess(res, { friends: data.map((row) => row.user_a_id === req.userId ? row.user_b_id : row.user_a_id) })
+    })
+
+    /**
+     * Friend profile songs + text statuses for the Friends tab activity rail.
+     * One batched read (friends → profile rows); omits friends with neither song nor status text.
+     */
+    app.get("/me/friends/activity", { preHandler: app.authenticate }, async (req, res) => {
+        const { data: friendRows, error: friendsError } = await supabase
+            .schema("public")
+            .from("friends")
+            .select("user_a_id, user_b_id")
+            .or(`user_a_id.eq.${req.userId},user_b_id.eq.${req.userId}`)
+
+        if (friendsError) {
+            return sendError(res, "FRIENDS_ACTIVITY_FETCH_FAILED", friendsError.message, 500)
+        }
+
+        const friendIds = (friendRows ?? []).map((row) =>
+            row.user_a_id === req.userId ? row.user_b_id : row.user_a_id
+        )
+
+        if (friendIds.length === 0) {
+            return sendSuccess(res, { activities: [] })
+        }
+
+        const { data: profiles, error: profilesError } = await supabase
+            .schema("public")
+            .from("profiles")
+            .select(PROFILE_DETAIL_SELECT)
+            .in("id", friendIds)
+
+        if (profilesError) {
+            return sendError(res, "FRIENDS_ACTIVITY_FETCH_FAILED", profilesError.message, 500)
+        }
+
+        const activities = buildFriendActivitiesFromProfileRows(profiles ?? [])
+        return sendSuccess(res, { activities })
     })
     
     app.get("/me/follow_requests", { preHandler: app.authenticate }, async (req, res) => {
