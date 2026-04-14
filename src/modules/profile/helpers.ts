@@ -203,6 +203,8 @@ export type FriendActivityItem = {
         name: string
         artistName: string | null
         artworkUrl: string | null
+        source: string | null
+        sourceId: string | null
     } | null
     /** Status caption (e.g. `user_status.text` alongside a status track). */
     text: string | null
@@ -245,6 +247,8 @@ function profileSongTrackFromRow(ps: unknown): FriendActivityItem["track"] {
         name,
         artistName: artistNameFromEmbed(o.artist),
         artworkUrl: pickString(o.artwork_url),
+        source: pickString(o.source),
+        sourceId: pickString(o.source_id),
     }
 }
 
