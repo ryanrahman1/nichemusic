@@ -35,3 +35,5 @@ const realtimeRoutes: FastifyPluginAsync = async (app) => {
 
 
 }
+
+export default realtimeRoutes

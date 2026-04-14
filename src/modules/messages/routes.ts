@@ -4,7 +4,7 @@
 
 
 import { FastifyPluginAsync } from "fastify"
-import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema } from "./schemas.js"
+import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema, ensureDmSchema } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 import { supabase } from "../../config/supabase.js"
 import { sendError, sendSuccess } from "../../global/response.js"
@@ -28,7 +28,71 @@ function uniqueStrings(values: Array<string | null | undefined>) {
     return [...new Set(values.filter((v): v is string => Boolean(v)))]
 }
 
+async function findDirectConversationId(userA: string, userB: string): Promise<string | null> {
+    const { data: mine, error } = await supabase
+        .from("conversation_members")
+        .select("conversation_id")
+        .eq("user_id", userA)
+    if (error || !mine?.length) return null
+    const convIds = [...new Set(mine.map((m) => m.conversation_id))]
+    const { data: members, error: mErr } = await supabase
+        .from("conversation_members")
+        .select("conversation_id, user_id")
+        .in("conversation_id", convIds)
+    if (mErr || !members) return null
+    const byConv = new Map<string, Set<string>>()
+    for (const row of members) {
+        if (!byConv.has(row.conversation_id)) byConv.set(row.conversation_id, new Set())
+        byConv.get(row.conversation_id)!.add(row.user_id)
+    }
+    for (const [cid, set] of byConv) {
+        if (set.size === 2 && set.has(userA) && set.has(userB)) return cid
+    }
+    return null
+}
+
+async function assertFriendship(actorId: string, otherUserId: string): Promise<boolean> {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("friends")
+        .select("user_a_id, user_b_id")
+        .or(`user_a_id.eq.${actorId},user_b_id.eq.${actorId}`)
+    if (error || !data) return false
+    return data.some(
+        (r) =>
+            (r.user_a_id === actorId && r.user_b_id === otherUserId) ||
+            (r.user_b_id === actorId && r.user_a_id === otherUserId)
+    )
+}
+
 const messagesRoutes: FastifyPluginAsync = async (app) => {
+    app.post("/messages/dm/ensure", { preHandler: app.authenticate }, async (req, res) => {
+        const { otherUserId } = ensureDmSchema.parse(req.body)
+        if (otherUserId === req.userId) {
+            return sendError(res, "DM_INVALID", "Cannot open a conversation with yourself", 400)
+        }
+        const okFriend = await assertFriendship(req.userId, otherUserId)
+        if (!okFriend) {
+            return sendError(res, "DM_FORBIDDEN", "You can only message friends", 403)
+        }
+        const existing = await findDirectConversationId(req.userId, otherUserId)
+        if (existing) {
+            return sendSuccess(res, { conversationId: existing, created: false })
+        }
+        const conversationId = generateRandomId(12)
+        const { error: cErr } = await supabase.from("conversations").insert({ id: conversationId })
+        if (cErr) return sendError(res, "DM_CREATE_FAILED", cErr.message, 500)
+        const { error: memErr } = await supabase.from("conversation_members").insert([
+            { conversation_id: conversationId, user_id: req.userId },
+            { conversation_id: conversationId, user_id: otherUserId },
+        ])
+        if (memErr) {
+            await supabase.from("conversations").delete().eq("id", conversationId)
+            return sendError(res, "DM_CREATE_FAILED", memErr.message, 500)
+        }
+        return sendSuccess(res, { conversationId, created: true })
+    })
+
     app.post('/messages/create', { preHandler: app.authenticate }, async (req, res) => {
         // create message, send to somebody
 
@@ -414,6 +478,8 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
                     .select(`
                   id,
                   name,
+                  source,
+                  source_id,
                   artwork_url,
                   preview_url,
                   artist_id,

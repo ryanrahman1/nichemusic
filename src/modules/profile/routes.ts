@@ -299,7 +299,14 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     app.get("/me/friends", { preHandler: app.authenticate }, async (req, res) => {
         const { data, error } = await supabase.schema('public').from('friends').select('user_a_id, user_b_id').or(`user_a_id.eq.${req.userId},user_b_id.eq.${req.userId}`)
         if (error) { return sendError(res, "FRIENDS_FETCH_FAILED", error.message, 500) }
-        return sendSuccess(res, { friends: data.map((row) => row.user_a_id === req.userId ? row.user_b_id : row.user_a_id) })
+        const ids = data.map((row) => row.user_a_id === req.userId ? row.user_b_id : row.user_a_id)
+        try {
+            const friends = await profilesForUserIdsOrdered(ids)
+            return sendSuccess(res, { friends })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load friends"
+            return sendError(res, "FRIENDS_FETCH_FAILED", message, 500)
+        }
     })
 
     /**

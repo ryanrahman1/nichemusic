@@ -22,6 +22,7 @@ import feedRoutes from "./modules/feed/routes.js"
 import shareRoutes from "./modules/share/routes.js"
 import messagesRoutes from "./modules/messages/routes.js"
 import moderationRoutes from "./modules/moderation/routes.js"
+import realtimeRoutes from "./global/realtime/realtime.js"
 
 
 const isProd = env.state === "production"
@@ -78,5 +79,6 @@ app.register(feedRoutes)
 app.register(shareRoutes, { prefix: "/public/share" })
 app.register(messagesRoutes)
 app.register(moderationRoutes)
+app.register(realtimeRoutes)
 
 export default app
