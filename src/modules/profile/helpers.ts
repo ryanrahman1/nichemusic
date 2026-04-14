@@ -6,6 +6,14 @@ import { supabase } from "../../config/supabase.js"
 export const PROFILE_DETAIL_SELECT =
     "*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
 
+/** Narrow profile fetch for `GET /me/friends/activity` (statuses loaded separately). */
+export const FRIEND_ACTIVITY_PROFILE_SELECT =
+    "id, username, display_name, avatar_url, updated_at, profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
+
+/** Direct `user_status` read so rows resolve even when the profile embed shape/RLS differs. */
+export const FRIEND_ACTIVITY_USER_STATUS_SELECT =
+    "profile_id, text, track_id, created_at, expires_at, track:tracks!user_status_track_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
+
 export type ViewerProfileContext = {
     isSelf: boolean
     /** You follow them; `null` when {@link isSelf} (not applicable). */
@@ -196,7 +204,10 @@ export type FriendActivityItem = {
         artistName: string | null
         artworkUrl: string | null
     } | null
+    /** Status caption (e.g. `user_status.text` alongside a status track). */
     text: string | null
+    /** Shown when the card uses `profiles.profile_song` because there is no active status. */
+    footerNote: string | null
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -237,28 +248,37 @@ function profileSongTrackFromRow(ps: unknown): FriendActivityItem["track"] {
     }
 }
 
-function statusTextFromUserStatus(us: Record<string, unknown> | null): string | null {
-    if (!us) return null
-    for (const key of ["text", "body", "note", "message", "content"] as const) {
-        const t = pickString(us[key])
-        if (t) return t
-    }
-    return null
+function userStatusExpired(us: Record<string, unknown>): boolean {
+    const raw = us.expires_at
+    if (raw == null) return false
+    if (typeof raw !== "string") return false
+    const t = new Date(raw).getTime()
+    if (Number.isNaN(t)) return false
+    return t < Date.now()
 }
 
-function maxIso(a: string | null, b: string | null): string | null {
-    if (!a) return b
-    if (!b) return a
-    return new Date(a).getTime() >= new Date(b).getTime() ? a : b
+function indexUserStatusByProfileId(statusRows: unknown[]): Map<string, Record<string, unknown>> {
+    const map = new Map<string, Record<string, unknown>>()
+    for (const raw of statusRows) {
+        const row = asRecord(raw)
+        const profileId = row ? pickString(row.profile_id) : null
+        if (profileId && row) map.set(profileId, row)
+    }
+    return map
 }
 
 /**
- * Maps `profiles` rows (same shape as {@link PROFILE_DETAIL_SELECT}) into activity cards.
- * Prefers a profile song for the “music” card; otherwise uses a non-empty `user_status` text field.
+ * Builds friend activity cards: **active** `user_status` (not past `expires_at`) first
+ * (track and/or text); otherwise `profile_song` with a footer note; otherwise omitted.
  */
-export function buildFriendActivitiesFromProfileRows(rows: unknown[]): FriendActivityItem[] {
+export function buildFriendActivitiesFromFriendData(
+    profiles: unknown[],
+    statusRows: unknown[]
+): FriendActivityItem[] {
+    const statusByProfile = indexUserStatusByProfileId(statusRows)
     const out: FriendActivityItem[] = []
-    for (const raw of rows) {
+
+    for (const raw of profiles) {
         const row = asRecord(raw)
         if (!row) continue
         const userId = pickString(row.id)
@@ -268,30 +288,64 @@ export function buildFriendActivitiesFromProfileRows(rows: unknown[]): FriendAct
         const displayName = pickString(row.display_name)
         const avatarUrl = pickString(row.avatar_url)
         const profileUpdated = pickString(row.updated_at)
+        const profileSongTrack = profileSongTrackFromRow(row.profile_song)
 
-        const us = asRecord(row.user_status)
-        const statusText = statusTextFromUserStatus(us)
-        const statusUpdated = maxIso(pickString(us?.updated_at), pickString(us?.created_at))
+        const usRaw = statusByProfile.get(userId) ?? null
+        const activeStatus =
+            usRaw && !userStatusExpired(usRaw) ? usRaw : null
 
-        const track = profileSongTrackFromRow(row.profile_song)
+        const statusText = activeStatus ? pickString(activeStatus.text) : null
+        const statusTrack = activeStatus
+            ? profileSongTrackFromRow(activeStatus.track)
+            : null
+        const statusCreated = activeStatus
+            ? pickString(activeStatus.created_at)
+            : null
+
+        const hasStatusContent =
+            !!activeStatus &&
+            (!!statusText || !!statusTrack || !!pickString(activeStatus.track_id))
 
         let kind: FriendActivityItem["kind"] | null = null
-        let text: string | null = null
         let trackOut: FriendActivityItem["track"] = null
+        let text: string | null = null
+        let footerNote: string | null = null
+        let updatedAt: string | null = null
 
-        if (track) {
+        if (hasStatusContent) {
+            if (statusTrack) {
+                kind = "music"
+                trackOut = statusTrack
+                text = statusText
+                updatedAt = statusCreated
+            } else if (statusText) {
+                kind = "text"
+                text = statusText
+                trackOut = null
+                updatedAt = statusCreated
+            } else if (pickString(activeStatus?.track_id) && !statusTrack) {
+                /* `track_id` set but embed failed — fall back so the card still shows something */
+                if (profileSongTrack) {
+                    kind = "music"
+                    trackOut = profileSongTrack
+                    text = null
+                    footerNote = "Profile song"
+                    updatedAt = profileUpdated
+                } else {
+                    continue
+                }
+            } else {
+                continue
+            }
+        } else if (profileSongTrack) {
             kind = "music"
-            trackOut = track
+            trackOut = profileSongTrack
             text = null
-        } else if (statusText) {
-            kind = "text"
-            text = statusText
-            trackOut = null
+            footerNote = "Profile song"
+            updatedAt = profileUpdated
+        } else {
+            continue
         }
-
-        if (!kind) continue
-
-        const updatedAt = maxIso(statusUpdated, profileUpdated)
 
         out.push({
             userId,
@@ -302,6 +356,7 @@ export function buildFriendActivitiesFromProfileRows(rows: unknown[]): FriendAct
             updatedAt,
             track: trackOut,
             text,
+            footerNote,
         })
     }
 
