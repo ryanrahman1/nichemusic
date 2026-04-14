@@ -4,6 +4,7 @@ import cors from "@fastify/cors"
 import cookie from "@fastify/cookie"
 import multipart from "@fastify/multipart"
 import rateLimit from "@fastify/rate-limit"
+import websocket from "@fastify/websocket"
 
 import { authenticate, optionalAuthenticate } from "./plugins/authenticate.js"
 import requestLoggerPlugin from "./plugins/requestLogger.js"
@@ -19,6 +20,7 @@ import notificationsRoutes from "./modules/notifications/routes.js"
 import searchRoutes from "./modules/search/routes.js"
 import feedRoutes from "./modules/feed/routes.js"
 import shareRoutes from "./modules/share/routes.js"
+import messagesRoutes from "./modules/messages/routes.js"
 
 
 const isProd = env.state === "production"
@@ -45,6 +47,7 @@ const app = fastify({
 
 app.register(cookie)
 app.register(multipart)
+app.register(websocket)
 app.register(authenticate)
 app.register(optionalAuthenticate)
 app.register(requestLoggerPlugin)
@@ -72,5 +75,7 @@ app.register(notificationsRoutes)
 app.register(searchRoutes)
 app.register(feedRoutes)
 app.register(shareRoutes, { prefix: "/public/share" })
+app.register(messagesRoutes)
+
 
 export default app
