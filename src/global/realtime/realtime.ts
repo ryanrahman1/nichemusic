@@ -6,16 +6,16 @@ import { addSocket, removeSocket } from "./socketManager.js"
 
 const realtimeRoutes: FastifyPluginAsync = async (app) => {
 
-    app.get('/ws', { websocket: true}, async (connection: any, req) => {
-        const socket = connection.socket
+    /** First arg is the `ws` WebSocket; second is FastifyRequest (@fastify/websocket v11). */
+    app.get('/ws', { websocket: true }, async (socket, req) => {
         const token = req.cookies.session
         if (!token) {
-            connection.close()
+            socket.close()
             return
         }
         const session = await authenticateSessionToken(token)
         if (!session) {
-            connection.close()
+            socket.close()
             return
         }
 
@@ -26,11 +26,9 @@ const realtimeRoutes: FastifyPluginAsync = async (app) => {
             removeSocket(userId, socket)
         })
 
-        socket.on('message', (msg: Buffer) => {
+        socket.on('message', (_msg: Buffer) => {
             // whtv
-
         })
-
     })
 
 
