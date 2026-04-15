@@ -14,6 +14,8 @@ const moderationRoutes: FastifyPluginAsync = async (app) => {
             reporter_id: req.userId,
             target_type: parsedBody.targetType,
             target_id: parsedBody.targetId,
+            reported_user_id: parsedBody.reportedUserId ?? null,
+            reason: parsedBody.reason,
             content: parsedBody.content,
             status: parsedBody.status,
             priority: parsedBody.priority,
