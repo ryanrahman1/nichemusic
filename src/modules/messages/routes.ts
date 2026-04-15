@@ -4,7 +4,7 @@
 
 
 import { FastifyPluginAsync } from "fastify"
-import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema, ensureDmSchema } from "./schemas.js"
+import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema, ensureDmSchema, unsendMessageSchema } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 import { supabase } from "../../config/supabase.js"
 import { sendError, sendSuccess } from "../../global/response.js"
@@ -385,6 +385,60 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { conversationId, userId: req.userId, lastReadMessageId: messageId, lastReadAt: now })
 
+    })
+
+    app.post("/messages/unsend", { preHandler: app.authenticate }, async (req, res) => {
+        const { conversationId, messageId } = unsendMessageSchema.parse(req.body)
+        const userId = req.userId
+
+        const isMember = await requireConversationMembership(conversationId, userId)
+        if (!isMember) {
+            return sendError(res, "FORBIDDEN", "You are not a member of this conversation", 403)
+        }
+
+        const { data: row, error: selErr } = await supabase
+            .from("messages")
+            .select("id, sender_id, unsent_at")
+            .eq("id", messageId)
+            .eq("conversation_id", conversationId)
+            .maybeSingle()
+
+        if (selErr) return sendError(res, "MESSAGE_UNSEND_FAILED", selErr.message, 500)
+        if (!row) return sendError(res, "MESSAGE_UNSEND_FAILED", "Message not found", 404)
+        if (row.sender_id !== userId) {
+            return sendError(res, "MESSAGE_UNSEND_FAILED", "You can only unsend your own messages", 403)
+        }
+        if (row.unsent_at) {
+            return sendSuccess(res, { conversationId, messageId, alreadyUnsent: true })
+        }
+
+        const now = new Date().toISOString()
+        const { error: updErr } = await supabase
+            .from("messages")
+            .update({ unsent_at: now })
+            .eq("id", messageId)
+            .eq("conversation_id", conversationId)
+
+        if (updErr) return sendError(res, "MESSAGE_UNSEND_FAILED", updErr.message, 500)
+
+        const event = {
+            type: "message_unsent",
+            conversationId,
+            messageId,
+        }
+
+        const { data: members, error: membersError } = await supabase
+            .from("conversation_members")
+            .select("user_id")
+            .eq("conversation_id", conversationId)
+
+        if (membersError) return sendError(res, "MESSAGE_UNSEND_FAILED", membersError.message, 500)
+
+        for (const member of members ?? []) {
+            emitToUser(member.user_id, event)
+        }
+
+        return sendSuccess(res, { conversationId, messageId, unsentAt: now })
     })
 
     app.get('/inbox', { preHandler: app.authenticate }, async (req, res) => {

@@ -61,3 +61,8 @@ export const getConversationQuerySchema = z.object({
 export const ensureDmSchema = z.object({
     otherUserId: z.string().min(1),
 })
+
+export const unsendMessageSchema = z.object({
+    conversationId: z.string().min(1),
+    messageId: z.string().min(1),
+})

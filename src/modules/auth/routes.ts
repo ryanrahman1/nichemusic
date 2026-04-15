@@ -4,7 +4,7 @@ import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, 
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { supabase } from "../../config/supabase.js"
 import env from "../../config/env.js"
-import { sendSuccess } from "../../global/response.js"
+import { sendError, sendSuccess } from "../../global/response.js"
 
 
 // signup flow: post to signup -> client gets url, uploads the image -> on success, client makes patch request to /auth/me/avatar with the object key and avatar url
@@ -89,7 +89,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const ipAddress = req.ip
         const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
 
-        const result = await loginWithEmail(parsedBody.email, parsedBody.password, { ipAddress, userAgent })
+        let result: Awaited<ReturnType<typeof loginWithEmail>>
+        try {
+            result = await loginWithEmail(parsedBody.email, parsedBody.password, { ipAddress, userAgent })
+        } catch (e) {
+            const message =
+                e instanceof Error && e.message ? e.message : "Invalid email or password"
+            return sendError(res, "LOGIN_FAILED", message, 401)
+        }
 
         res.setCookie("session", result.sessionToken, {
             httpOnly: true,
@@ -99,13 +106,10 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             maxAge: 60 * 60 * 24 * 365
         })
 
-        return res.status(200).send({
-            success: true,
-            result: {
-                user: {
-                    id: result.userId,
-                }
-            }
+        return sendSuccess(res, {
+            user: {
+                id: result.userId,
+            },
         })
     })
 
