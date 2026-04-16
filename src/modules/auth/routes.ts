@@ -133,7 +133,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 req.headers["accept"].includes("text/html"))
 
         if (wantRedirect) {
-            return res.redirect(302, url)
+            return res.redirect(url)
         }
 
         return res.status(200).send({
