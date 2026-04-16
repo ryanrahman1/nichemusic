@@ -23,6 +23,11 @@ export const signupOAuthSchema = z.object({
     username: z.string().min(3),
 })
 
+export const exchangeSessionSchema = z.object({
+    sessionToken: z.string().min(1),
+})
+
 export type SignupEmailSchema = z.infer<typeof signupEmailSchema>
 export type LoginEmailSchema = z.infer<typeof loginEmailSchema>
 export type SignupOAuthSchema = z.infer<typeof signupOAuthSchema>
+export type ExchangeSessionSchema = z.infer<typeof exchangeSessionSchema>

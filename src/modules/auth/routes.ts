@@ -1,5 +1,5 @@
 import { FastifyPluginAsync } from "fastify"
-import { SignupEmailSchema, signupEmailSchema, loginEmailSchema, LoginEmailSchema, googleCallbackQuerySchema, SignupOAuthSchema, signupOAuthSchema } from "./schemas.js"
+import { SignupEmailSchema, signupEmailSchema, loginEmailSchema, LoginEmailSchema, googleCallbackQuerySchema, SignupOAuthSchema, signupOAuthSchema, exchangeSessionSchema } from "./schemas.js"
 import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, generateOAuthState, buildGoogleAuthUrl, handleGoogleCallback, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME, signupWithOAuth } from "../../lib/auth.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { supabase } from "../../config/supabase.js"
@@ -127,6 +127,20 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             maxAge: 60 * 10, // 10 min
         })
 
+        const appRedirect =
+            typeof (req.query as { app_redirect?: string }).app_redirect === "string"
+                ? (req.query as { app_redirect?: string }).app_redirect
+                : null
+        if (appRedirect && appRedirect.length > 0) {
+            res.setCookie("oauth_app_redirect", appRedirect, {
+                httpOnly: true,
+                secure: env.state === "production",
+                sameSite: "lax",
+                path: "/",
+                maxAge: 60 * 10,
+            })
+        }
+
         const wantRedirect =
             (req.query as { redirect?: string }).redirect === "1" ||
             (typeof req.headers["accept"] === "string" &&
@@ -179,6 +193,14 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 path: "/",
                 maxAge: 60 * 60 * 24 * 365,
             })
+            const appRedirect = req.cookies["oauth_app_redirect"]
+            if (typeof appRedirect === "string" && appRedirect.length > 0) {
+                res.clearCookie("oauth_app_redirect", { path: "/" })
+                const u = new URL(appRedirect)
+                u.searchParams.set("kind", "authenticated")
+                u.searchParams.set("sessionToken", result.sessionToken)
+                return res.redirect(u.toString())
+            }
 
             return res.status(200).send({
                 success: true,
@@ -189,6 +211,18 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                     },
                 },
             })
+        }
+
+        const appRedirect = req.cookies["oauth_app_redirect"]
+        if (typeof appRedirect === "string" && appRedirect.length > 0) {
+            res.clearCookie("oauth_app_redirect", { path: "/" })
+            const u = new URL(appRedirect)
+            u.searchParams.set("kind", "needs_signup")
+            u.searchParams.set("provider", result.provider)
+            u.searchParams.set("signupToken", result.signupToken)
+            if (result.email) u.searchParams.set("email", result.email)
+            if (result.avatarUrl) u.searchParams.set("avatarUrl", result.avatarUrl)
+            return res.redirect(u.toString())
         }
 
         return res.status(200).send({
@@ -244,6 +278,23 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 }
             }
         })
+    })
+
+    /**
+     * Mobile OAuth: after browser-based callback, app receives `sessionToken`
+     * via deep link and then exchanges it for an HttpOnly session cookie in the
+     * app's networking context.
+     */
+    app.post("/session/exchange", async (req, res) => {
+        const parsedBody = exchangeSessionSchema.parse(req.body)
+        res.setCookie(SESSION_COOKIE_NAME, parsedBody.sessionToken, {
+            httpOnly: true,
+            secure: env.state === "production",
+            sameSite: "lax",
+            path: "/",
+            maxAge: 60 * 60 * 24 * 365,
+        })
+        return sendSuccess(res, { ok: true })
     })
 
     app.post("/logout", { preHandler: [app.authenticate] }, async (req, res) => {
