@@ -13,3 +13,12 @@ export const updateProfileSchema = z.object({
     tiktok_handle: z.string().optional(),
     update_avatar: z.boolean().optional()
 })
+
+export const upsertStatusSchema = z
+    .object({
+        text: z.string().trim().max(180).optional(),
+        track_id: z.string().trim().optional(),
+    })
+    .refine((v) => Boolean(v.text || v.track_id), {
+        message: "Status needs text or a track",
+    })

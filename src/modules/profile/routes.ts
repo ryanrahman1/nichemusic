@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify"
 import { supabase } from "../../config/supabase.js"
-import { updateProfileSchema } from "./schemas.js"
+import { updateProfileSchema, upsertStatusSchema } from "./schemas.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { sendFollowNotification, sendFollowRequestNotification } from "../../lib/notifications.js"
@@ -307,6 +307,48 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             const message = e instanceof Error ? e.message : "Failed to load friends"
             return sendError(res, "FRIENDS_FETCH_FAILED", message, 500)
         }
+    })
+
+    app.post("/me/status", { preHandler: app.authenticate }, async (req, res) => {
+        const parsed = upsertStatusSchema.parse(req.body)
+        const nowIso = new Date().toISOString()
+        const expiresIso = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+
+        const { error: clearError } = await supabase
+            .schema("public")
+            .from("user_status")
+            .delete()
+            .eq("profile_id", req.userId)
+        if (clearError) {
+            return sendError(res, "STATUS_UPSERT_FAILED", clearError.message, 500)
+        }
+
+        const { error } = await supabase
+            .schema("public")
+            .from("user_status")
+            .insert({
+                profile_id: req.userId,
+                text: parsed.text ?? null,
+                track_id: parsed.track_id ?? null,
+                created_at: nowIso,
+                expires_at: expiresIso,
+            })
+        if (error) {
+            return sendError(res, "STATUS_UPSERT_FAILED", error.message, 500)
+        }
+        return sendSuccess(res, { ok: true })
+    })
+
+    app.delete("/me/status", { preHandler: app.authenticate }, async (req, res) => {
+        const { error } = await supabase
+            .schema("public")
+            .from("user_status")
+            .delete()
+            .eq("profile_id", req.userId)
+        if (error) {
+            return sendError(res, "STATUS_DELETE_FAILED", error.message, 500)
+        }
+        return sendSuccess(res, { ok: true })
     })
 
     /**
