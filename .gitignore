@@ -3,3 +3,4 @@
 .pnpm-store
 .DS_Store
 context.sql
+/dist

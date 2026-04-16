@@ -23,6 +23,7 @@ import shareRoutes from "./modules/share/routes.js"
 import messagesRoutes from "./modules/messages/routes.js"
 import moderationRoutes from "./modules/moderation/routes.js"
 import realtimeRoutes from "./global/realtime/realtime.js"
+import { sendSuccess } from "./global/response.js"
 
 
 const isProd = env.state === "production"
@@ -80,5 +81,9 @@ app.register(shareRoutes, { prefix: "/public/share" })
 app.register(messagesRoutes)
 app.register(moderationRoutes)
 app.register(realtimeRoutes)
+
+app.get("/health", (req, res) => {
+    return sendSuccess(res, { healthy: true })
+})
 
 export default app
