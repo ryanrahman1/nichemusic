@@ -26,8 +26,21 @@ const realtimeRoutes: FastifyPluginAsync = async (app) => {
             removeSocket(userId, socket)
         })
 
-        socket.on('message', (_msg: Buffer) => {
-            // whtv
+        socket.on('message', (msg: Buffer) => {
+            try {
+                const raw = String(msg)
+                const parsed = JSON.parse(raw) as { type?: unknown }
+                if (parsed?.type === "ping") {
+                    socket.send(
+                        JSON.stringify({
+                            type: "pong",
+                            ts: Date.now(),
+                        })
+                    )
+                }
+            } catch {
+                // ignore non-json messages
+            }
         })
     })
 
