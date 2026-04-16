@@ -4,7 +4,7 @@ import { supabase } from "../../config/supabase.js"
 
 /** Same shape for `GET /me` and full `GET /users/:username` profile rows. */
 export const PROFILE_DETAIL_SELECT =
-    "*, user_status(*), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
+    "*, user_status(*, track:tracks!user_status_track_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
 
 /** Narrow profile fetch for `GET /me/friends/activity` (statuses loaded separately). */
 export const FRIEND_ACTIVITY_PROFILE_SELECT =
