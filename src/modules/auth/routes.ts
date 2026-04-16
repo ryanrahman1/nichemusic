@@ -114,24 +114,33 @@ const authRoutes: FastifyPluginAsync = async (app) => {
     })
 
     // oauth
-    // get google auth url, and set the state in a temp cookie
+    // get google auth url, set state cookie; supports both JSON and browser redirect
     app.get("/signup/google", async (req, res) => {
         const state = generateOAuthState()
         const url = buildGoogleAuthUrl(state)
 
-        res.setCookie("oauth_state", state, {
+        res.setCookie(OAUTH_STATE_COOKIE_NAME, state, {
             httpOnly: true,
             secure: env.state === "production",
             sameSite: "lax",
             path: "/",
-            maxAge: 60 * 10 // 10 min
+            maxAge: 60 * 10, // 10 min
         })
+
+        const wantRedirect =
+            (req.query as { redirect?: string }).redirect === "1" ||
+            (typeof req.headers["accept"] === "string" &&
+                req.headers["accept"].includes("text/html"))
+
+        if (wantRedirect) {
+            return res.redirect(302, url)
+        }
 
         return res.status(200).send({
             success: true,
             result: {
-                url: url
-            }
+                url,
+            },
         })
     })
 
