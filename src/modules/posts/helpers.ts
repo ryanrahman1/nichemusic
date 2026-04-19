@@ -417,7 +417,7 @@ export async function buildCommentContent(input: CreateCommentSchema) {
 
     if (input.kind === "gif") return { version: 1, kind: "gif", text: input.text ?? "", gif: input.gif }
 
-    const { data: track, error: trackError } = await supabase.schema("public").from("tracks").select("id, source, name, artwork_url, preview_url, artist_id, album_id, release_date").eq("id", input.trackId).single()
+    const { data: track, error: trackError } = await supabase.schema("public").from("tracks").select("id, source, source_id, name, artwork_url, preview_url, artist_id, album_id, release_date").eq("id", input.trackId).single()
     if (trackError || !track) throw new Error("Track not found")
 
     const { data: artist } = track.artist_id ? await supabase.schema("public").from("artists").select("name").eq("id", track.artist_id).maybeSingle() : { data: null }
@@ -429,6 +429,7 @@ export async function buildCommentContent(input: CreateCommentSchema) {
         track: {
             id: track.id,
             source: track.source,
+            source_id: (track as any).source_id ?? null,
             title: track.name,
             artist_id: track.artist_id,
             artist_name: artist?.name ?? null,
