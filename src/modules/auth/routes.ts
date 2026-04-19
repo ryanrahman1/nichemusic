@@ -357,6 +357,21 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, { authenticated: true }) // if the route works then it means that the session check succeeded, so just retunr true
 
     }) 
+
+
+    // for apple: delete account
+    app.post('/me/delete', { preHandler: app.authenticate }, async (req, res) => {
+        const { data, error } = await supabase.schema('authn').from('users').delete().eq('id', req.userId).select('*').single()
+
+        if (error) { return sendError(res, "USER_DELETE_FAILED", error.message, 500) }
+
+        const { error: delRequestError } = await supabase.from('delete_requests').insert({
+            user_id: req.userId
+        })
+        if (delRequestError) { return sendError(res, "DELETE_REQUEST_FAILED", delRequestError.message, 500) }
+
+        return sendSuccess(res, { message: "User deleted successfully — awaiting further review." })
+    })
 }
 
 export default authRoutes
