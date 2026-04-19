@@ -16,6 +16,48 @@ function encodeScoreCursor(input: { cursorScore: number; cursorCreatedAt: string
 }
 
 const groupsRoutes: FastifyPluginAsync = async (app) => {
+    app.get('/groups/search', { preHandler: app.optionalAuthenticate }, async (req, res) => {
+        const { q, limit: rawLimit } = req.query as { q?: string; limit?: string }
+        const limit = Math.min(30, parseInt(rawLimit ?? "20", 10) || 20)
+
+        if (!q || q.trim().length < 2) return sendSuccess(res, { groups: [] })
+
+        const term = q.trim()
+        const { data: groups, error } = await supabase
+            .schema("public")
+            .from("groups")
+            .select("id, name, slug, description, image_url, is_private, member_count, created_at")
+            .ilike("name", `%${term}%`)
+            .order("member_count", { ascending: false, nullsFirst: false })
+            .limit(limit)
+
+        if (error) return sendError(res, "GROUP_SEARCH_FAILED", error.message, 500)
+
+        const rows = groups ?? []
+        let memberSet = new Set<string>()
+        let requestSet = new Set<string>()
+
+        if (req.userId && rows.length > 0) {
+            const ids = rows.map((g) => g.id)
+            const [{ data: memberships }, { data: requests }] = await Promise.all([
+                supabase.schema("public").from("group_members").select("group_id").eq("user_id", req.userId).in("group_id", ids),
+                supabase.schema("public").from("group_join_requests").select("group_id").eq("user_id", req.userId).in("group_id", ids),
+            ])
+            memberSet = new Set((memberships ?? []).map((m) => m.group_id))
+            requestSet = new Set((requests ?? []).map((r) => r.group_id))
+        }
+
+        return sendSuccess(res, {
+            groups: rows.map((g) => ({
+                ...g,
+                viewer: {
+                    isMember: memberSet.has(g.id),
+                    hasRequested: requestSet.has(g.id),
+                },
+            })),
+        })
+    })
+
     app.get('/groups/:id', { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { id } = req.params as { id: string }
 
