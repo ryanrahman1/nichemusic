@@ -453,7 +453,7 @@ const groupsRoutes: FastifyPluginAsync = async (app) => {
         const { data: joinedPosts, error: joinedPostsError } = await supabase
             .schema("public")
             .from("posts")
-            .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
+            .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))")
             .in("id", postIds)
 
         if (joinedPostsError) return sendError(res, "GROUP_POSTS_FETCH_FAILED", joinedPostsError.message, 500)
