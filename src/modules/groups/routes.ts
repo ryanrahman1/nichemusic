@@ -87,7 +87,7 @@ const groupsRoutes: FastifyPluginAsync = async (app) => {
     })
 
     app.get('/groups/members', { preHandler: app.authenticate }, async (req, res) => { // all groups that the user is a member of
-        const { data: groups, error: groupsError } = await supabase.schema('public').from('group_members').select('*, groups!group_members_group_id_fkey(id, name, slug, image_url, is_private, member_count, created_at').eq('user_id', req.userId).order('joined_at', { ascending: false })
+        const { data: groups, error: groupsError } = await supabase.schema('public').from('group_members').select('*, groups!group_members_group_id_fkey(id, name, slug, image_url, is_private, member_count, created_at)').eq('user_id', req.userId).order('joined_at', { ascending: false })
         if (groupsError) return sendError(res, "GROUP_MEMBERS_FETCH_FAILED", groupsError.message, 500)
         return sendSuccess(res, { groups: groups })
     })
@@ -99,7 +99,7 @@ const groupsRoutes: FastifyPluginAsync = async (app) => {
     })
 
     app.get('/groups/me/requests', { preHandler: app.authenticate }, async (req, res) => { // all requests that the user has sent
-        const { data: requests, error: requestsError } = await supabase.schema('public').from('group_join_requests').select('*, groups!group_requests_group_id_fkey(id, name, slug, image_url, is_private, member_count, created_at').eq('user_id', req.userId).order('created_at', { ascending: false })
+        const { data: requests, error: requestsError } = await supabase.schema('public').from('group_join_requests').select('*, groups!group_requests_group_id_fkey(id, name, slug, image_url, is_private, member_count, created_at)').eq('user_id', req.userId).order('created_at', { ascending: false })
         if (requestsError) return sendError(res, "GROUP_REQUESTS_FETCH_FAILED", requestsError.message, 500)
         return sendSuccess(res, { requests: requests })
     })
