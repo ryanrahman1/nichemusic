@@ -4,6 +4,13 @@ import { sendError, sendSuccess } from "../../global/response.js"
 import { presignPostUploadSchema, createPostSchema, updatePostSchema, listCommentsQuerySchema, createCommentSchema, postListQuerySchema } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js" // placeholder
 import { getPostMediaPresignedUrl, getPostVideoPresignedUrl } from "../../lib/image.js"
+import {
+    sendCommentReplyNotification,
+    sendPostCommentNotification,
+    sendPostCreateFanout,
+    sendPostLikeNotification,
+    sendPostRepostNotification,
+} from "../../lib/notifications.js"
 import { addViewerToComments, buildCommentContent, cleanPostForInsert, cleanPostForUpdate, decodeCommentCursor, encodeCommentCursor, getPostViewerContextMap } from "./helpers.js"
 
 const postsRoutes: FastifyPluginAsync = async (app) => {
@@ -104,6 +111,11 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
 
         if (like_error) return sendError(res, "POST_LIKE_FAILED", like_error.message, 500)
+
+        void sendPostLikeNotification(req.userId, data.owner_id, id).catch((notifyError) => {
+            req.log.warn({ err: notifyError }, "post like notification failed")
+        })
+
         return sendSuccess(res, { message: "Post liked successfully", like_data: like_data })
 
     })
@@ -144,6 +156,11 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
 
         if (repost_error) return sendError(res, "POST_LIKE_FAILED", repost_error.message, 500)
+
+        void sendPostRepostNotification(req.userId, data.owner_id, id).catch((notifyError) => {
+            req.log.warn({ err: notifyError }, "post repost notification failed")
+        })
+
         return sendSuccess(res, { message: "Post reposted successfully", repost_data: repost_data })
 
     })
@@ -207,6 +224,12 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
 
             if (error) {
                 return sendError(res, "POST_CREATE_FAILED", error.message, 500)
+            }
+
+            if (parsedBody.visibility === "public") {
+                void sendPostCreateFanout(data.id).catch((notifyError) => {
+                    req.log.warn({ err: notifyError }, "post fanout enqueue failed")
+                })
             }
 
             return sendSuccess(res, {
@@ -439,6 +462,41 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             })
 
             if (error) return sendError(res, "COMMENT_CREATE_FAILED", error.message, 400)
+
+            if (parsedBody.replyToCommentId) {
+                const { data: replyTarget } = await supabase
+                    .schema("public")
+                    .from("post_comments")
+                    .select("id, owner_id")
+                    .eq("id", parsedBody.replyToCommentId)
+                    .maybeSingle()
+
+                if (replyTarget?.owner_id) {
+                    void sendCommentReplyNotification(
+                        req.userId,
+                        replyTarget.owner_id,
+                        replyTarget.id,
+                        id
+                    ).catch((notifyError) => {
+                        req.log.warn({ err: notifyError }, "comment reply notification failed")
+                    })
+                }
+            } else {
+                const { data: postOwner } = await supabase
+                    .schema("public")
+                    .from("posts")
+                    .select("owner_id")
+                    .eq("id", id)
+                    .maybeSingle()
+
+                if (postOwner?.owner_id) {
+                    void sendPostCommentNotification(req.userId, postOwner.owner_id, id, commentId).catch(
+                        (notifyError) => {
+                            req.log.warn({ err: notifyError }, "post comment notification failed")
+                        }
+                    )
+                }
+            }
 
             return sendSuccess(res, {
                 message: "Comment created successfully",

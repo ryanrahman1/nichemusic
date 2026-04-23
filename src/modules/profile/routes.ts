@@ -3,7 +3,11 @@ import { supabase } from "../../config/supabase.js"
 import { updateProfileSchema, upsertStatusSchema } from "./schemas.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { sendError, sendSuccess } from "../../global/response.js"
-import { sendFollowNotification, sendFollowRequestNotification } from "../../lib/notifications.js"
+import {
+    sendFollowAcceptNotification,
+    sendFollowNotification,
+    sendFollowRequestNotification,
+} from "../../lib/notifications.js"
 import {
     PROFILE_DETAIL_SELECT,
     FRIEND_ACTIVITY_PROFILE_SELECT,
@@ -150,13 +154,15 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         if (error) { return sendError(res, "FOLLOW_FAILED", error.message, 400) }
 
-        /**
         if (data.kind === "request_sent") {
-            await sendFollowRequestNotification(req.userId, otherUser.id)
+            void sendFollowRequestNotification(req.userId, otherUser.id).catch((error) => {
+                req.log.warn({ err: error }, "follow request notification failed")
+            })
         } else {
-            await sendFollowNotification(req.userId, otherUser.id)
+            void sendFollowNotification(req.userId, otherUser.id).catch((error) => {
+                req.log.warn({ err: error }, "follow notification failed")
+            })
         }
-        */
 
         return sendSuccess(res, { follow: data })
     })
@@ -419,6 +425,10 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         if (error) {
             return sendError(res, "FOLLOW_REQUEST_ACCEPT_FAILED", error.message, 400)
         }
+
+        void sendFollowAcceptNotification(req.userId, userId).catch((notifyError) => {
+            req.log.warn({ err: notifyError }, "follow accept notification failed")
+        })
 
         return sendSuccess(res, { accept: data })
     })
