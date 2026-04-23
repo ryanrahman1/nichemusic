@@ -127,7 +127,7 @@ export async function sendDirectAPNS(
 
     const messageId = response.headers["apns-id"]
     if (response.statusCode >= 200 && response.statusCode < 300) {
-        return { ok: true, messageId }
+        return messageId !== undefined ? { ok: true as const, messageId } : { ok: true as const }
     }
 
     let reason: string | undefined
@@ -146,12 +146,19 @@ export async function sendDirectAPNS(
         "InvalidProviderToken",
     ])
 
-    return {
-        ok: false,
-        statusCode: response.statusCode,
-        reason,
-        invalidateEndpoint: !!reason && invalidReasons.has(reason),
-    }
+    const invalidateEndpoint = !!reason && invalidReasons.has(reason)
+    return reason !== undefined
+        ? {
+            ok: false as const,
+            statusCode: response.statusCode,
+            reason,
+            invalidateEndpoint,
+        }
+        : {
+            ok: false as const,
+            statusCode: response.statusCode,
+            invalidateEndpoint,
+        }
 }
 
 async function sendAPNSHttp2Request(

@@ -31,7 +31,10 @@ function parseInteractionQuery(raw: unknown): PostInteractionQuery {
     const limit = Number.isFinite(parsedLimit)
         ? Math.min(50, Math.max(1, Math.floor(parsedLimit)))
         : 20
-    return { cursorCreatedAt, cursorUserId, limit }
+    const out: PostInteractionQuery = { limit }
+    if (cursorCreatedAt !== undefined) out.cursorCreatedAt = cursorCreatedAt
+    if (cursorUserId !== undefined) out.cursorUserId = cursorUserId
+    return out
 }
 
 async function ensureCanViewPost(postId: string, userId: string) {
