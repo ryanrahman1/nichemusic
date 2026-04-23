@@ -30,6 +30,15 @@ const envSchema = z.object({
         url: z.url(),
         apiKey: z.string(),
     }),
+    apns: z.object({
+        keyId: z.string().optional(),
+        teamId: z.string().optional(),
+        bundleId: z.string().optional().default("com.nichemusic.app"),
+        privateKey: z.string().optional(),
+    }),
+    admin: z.object({
+        userIds: z.array(z.string()).default([]),
+    }),
     port: z.coerce.number().default(3932),
     state: z.enum(["development", "production"]).default("development"),
 })
@@ -61,6 +70,18 @@ export const env = envSchema.parse({
     notificationWorker: {
         url: process.env.NOTIFICATION_WORKER_URL!,
         apiKey: process.env.NOTIFICATION_QUEUE_API_KEY!,
+    },
+    apns: {
+        keyId: process.env.APNS_KEY_ID,
+        teamId: process.env.APNS_TEAM_ID,
+        bundleId: process.env.APNS_BUNDLE_ID,
+        privateKey: process.env.APNS_PRIVATE_KEY,
+    },
+    admin: {
+        userIds: (process.env.ADMIN_USER_IDS ?? "")
+            .split(",")
+            .map((v) => v.trim())
+            .filter((v) => v.length > 0),
     },
     port: process.env.PORT,
 })

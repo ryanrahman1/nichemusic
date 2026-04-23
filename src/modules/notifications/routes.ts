@@ -1,9 +1,12 @@
 import { FastifyPluginAsync } from "fastify"
 import { supabase } from "../../config/supabase.js"
+import { env } from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { generateRandomId } from "../../lib/auth.js"
 import { registerPushDeviceSchema, RegisterPushDeviceSchema } from "./schemas.js"
 import { notificationPreferencesSchema, NotificationPreferencesSchema } from "./schemas.js"
+import { adminBroadcastNotificationSchema, AdminBroadcastNotificationSchema } from "./schemas.js"
+import { sendAdminBroadcastNotification } from "../../lib/notifications.js"
 
 const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
@@ -18,17 +21,28 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
     app.post('/me/notifications/:id/read', { preHandler: app.authenticate }, async (req, res) => {
         const { id } = req.params as { id: string }
-        const { data, error } = await supabase.schema("public").from("notifications").update({ read_at: new Date().toISOString(), read: true }).eq("id", id).eq("recipient_id", req.userId).single()
+        const { data, error } = await supabase.schema("public").from("notifications").update({ read_at: new Date().toISOString(), is_read: true }).eq("id", id).eq("recipient_id", req.userId).single()
         if (error) return sendError(res, "NOTIFICATION_READ_FAILED", error.message, 500)
 
         return sendSuccess(res, { notification: data })
     })
 
     app.post('/me/notifications/all/read', { preHandler: app.authenticate }, async (req, res) => {
-        const { data, error } = await supabase.schema("public").from("notifications").update({ read_at: new Date().toISOString(), read: true }).eq("recipient_id", req.userId)
+        const { data, error } = await supabase.schema("public").from("notifications").update({ read_at: new Date().toISOString(), is_read: true }).eq("recipient_id", req.userId)
         if (error) return sendError(res, "NOTIFICATIONS_READ_FAILED", error.message, 500)
 
         return sendSuccess(res, { notifications: data })
+    })
+
+    app.delete('/me/notifications/all/delete', { preHandler: app.authenticate }, async (req, res) => {
+        const { error } = await supabase
+            .schema("public")
+            .from("notifications")
+            .delete()
+            .eq("recipient_id", req.userId)
+        if (error) return sendError(res, "NOTIFICATIONS_DELETE_FAILED", error.message, 500)
+
+        return sendSuccess(res, { deleted: true })
     })
 
     app.post('/me/notifications/device', { preHandler: app.authenticate }, async (req, res) => {
@@ -142,6 +156,26 @@ const notificationsRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { preferences: data })
 
+    })
+
+    app.post("/admin/notifications/broadcast", { preHandler: app.authenticate }, async (req, res) => {
+        if (!env.admin.userIds.includes(req.userId)) {
+            return sendError(res, "FORBIDDEN", "Admin access required", 403)
+        }
+
+        const parsedBody: AdminBroadcastNotificationSchema = adminBroadcastNotificationSchema.parse(
+            req.body
+        )
+
+        const result = await sendAdminBroadcastNotification({
+            title: parsedBody.title,
+            body: parsedBody.body,
+            subtitle: parsedBody.subtitle ?? null,
+            link: parsedBody.link ?? null,
+            actorId: req.userId,
+        })
+
+        return sendSuccess(res, { sent: result.recipients })
     })
 
 }

@@ -27,3 +27,12 @@ export const notificationPreferencesSchema = z.object({
 })
 
 export type NotificationPreferencesSchema = z.infer<typeof notificationPreferencesSchema>
+
+export const adminBroadcastNotificationSchema = z.object({
+    title: z.string().min(1).max(120),
+    body: z.string().min(1).max(300),
+    subtitle: z.string().max(120).optional(),
+    link: z.string().max(500).optional(),
+})
+
+export type AdminBroadcastNotificationSchema = z.infer<typeof adminBroadcastNotificationSchema>

@@ -4,11 +4,12 @@
 
 
 import { FastifyPluginAsync } from "fastify"
-import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema, ensureDmSchema, unsendMessageSchema } from "./schemas.js"
+import { createMessageSchema, markConversationAsReadSchema, getConversationParamsSchema, getConversationQuerySchema, ensureDmSchema, unsendMessageSchema, createGroupChatSchema, groupAddMemberSchema, groupIdParamsSchema, updateGroupNameSchema } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 import { supabase } from "../../config/supabase.js"
 import { sendError, sendSuccess } from "../../global/response.js"
-import { emitToUser, hasActiveSocket } from "../../global/realtime/socketManager.js"
+import { emitToUser } from "../../global/realtime/socketManager.js"
+import { sendGroupAddedNotification, sendMessageNotification } from "../../lib/notifications.js"
 
 async function requireConversationMembership(conversationId: string, userId: string) {
     const { data, error } = await supabase
@@ -163,7 +164,7 @@ async function assertFriendship(actorId: string, otherUserId: string): Promise<b
 
 const messagesRoutes: FastifyPluginAsync = async (app) => {
     app.post("/messages/dm/ensure", { preHandler: app.authenticate }, async (req, res) => {
-        const { otherUserId } = ensureDmSchema.parse(req.body)
+        const { otherUserId, name } = ensureDmSchema.parse(req.body)
         if (otherUserId === req.userId) {
             return sendError(res, "DM_INVALID", "Cannot open a conversation with yourself", 400)
         }
@@ -176,7 +177,10 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
             return sendSuccess(res, { conversationId: existing, created: false })
         }
         const conversationId = generateRandomId(12)
-        const { error: cErr } = await supabase.from("conversations").insert({ id: conversationId })
+        const { error: cErr } = await supabase.from("conversations").insert({
+            id: conversationId,
+            name: name ?? null,
+        })
         if (cErr) return sendError(res, "DM_CREATE_FAILED", cErr.message, 500)
         const { error: memErr } = await supabase.from("conversation_members").insert([
             { conversation_id: conversationId, user_id: req.userId },
@@ -311,9 +315,17 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
             emitToUser(member.user_id, event)
         }
 
-        // notif
+        // push notifications
         for (const recipientId of recipientIds) {
-            const isOnline = hasActiveSocket(recipientId)
+            void sendMessageNotification(
+                req.userId,
+                recipientId,
+                conversationId,
+                msg.id,
+                textPlain
+            ).catch((notifyError) => {
+                req.log.warn({ err: notifyError }, "message notification failed")
+            })
         }
 
         return sendSuccess(res, { message: msgOut })
@@ -463,7 +475,7 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
 
         const { data: conversations, error: conversationsError } = await supabase
             .from('conversations')
-            .select('id, created_at, last_message_id, last_message_at')
+            .select('id, created_at, last_message_id, last_message_at, name')
             .in('id', conversationIds)
             .order('last_message_at', { ascending: false, nullsFirst: false })
 
@@ -518,13 +530,32 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
 
         const lastMessageById = new Map((lastMessages ?? []).map((m) => [m.id, m]))
 
+        const membersByConversationId = new Map<string, Array<{ user_id: string }>>()
+        for (const member of allMembers ?? []) {
+            const existing = membersByConversationId.get(member.conversation_id) ?? []
+            existing.push({ user_id: member.user_id })
+            membersByConversationId.set(member.conversation_id, existing)
+        }
+
         const inbox = (conversations ?? []).map((conversation) => {
             const membership = membershipByConversationId.get(conversation.id) ?? null
-            const otherMember = (allMembers ?? []).find(
-                (m) => m.conversation_id === conversation.id && m.user_id !== userId
-            )
-
-            const otherProfile = otherMember ? profileById.get(otherMember.user_id) ?? null : null
+            const conversationMembers = membersByConversationId.get(conversation.id) ?? []
+            const otherMemberIds = conversationMembers
+                .map((member) => member.user_id)
+                .filter((memberId) => memberId !== userId)
+            const otherProfiles = otherMemberIds
+                .map((memberId) => profileById.get(memberId) ?? null)
+                .filter((profile): profile is NonNullable<typeof profile> => Boolean(profile))
+            const otherProfile = otherProfiles[0] ?? null
+            const isGroup = conversationMembers.length > 2
+            const previewNames = otherProfiles
+                .map((profile) => profile.display_name ?? profile.username ?? "unknown")
+                .slice(0, 3)
+            const titleBase = previewNames.join(", ")
+            const fallbackTitle = otherProfiles.length > 3 ? `${titleBase}, ...` : titleBase
+            const conversationName =
+                typeof conversation.name === "string" ? conversation.name.trim() : ""
+            const title = conversationName.length > 0 ? conversationName : fallbackTitle
             const lastMessage = conversation.last_message_id
                 ? lastMessageById.get(conversation.last_message_id) ?? null
                 : null
@@ -534,6 +565,9 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
                 createdAt: conversation.created_at,
                 lastMessageAt: conversation.last_message_at,
                 otherUser: otherProfile,
+                conversationType: isGroup ? "group" : "dm",
+                title: title,
+                members: otherProfiles,
                 lastReadMessageId: membership?.last_read_message_id ?? null,
                 lastReadAt: membership?.last_read_at ?? null,
                 lastMessage,
@@ -652,6 +686,12 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
         if (albumsResult.error) return sendError(res, "MESSAGE_FETCH_FAILED", albumsResult.error.message, 500)
         if (artistsResult.error) return sendError(res, "MESSAGE_FETCH_FAILED", artistsResult.error.message, 500)
 
+        const { data: readStates, error: readStatesError } = await supabase
+            .from('conversation_members')
+            .select('user_id, last_read_message_id, last_read_at')
+            .eq('conversation_id', conversationId)
+        if (readStatesError) return sendError(res, "MESSAGE_FETCH_FAILED", readStatesError.message, 500)
+
         const profileById = new Map((profilesResult.data ?? []).map((p) => [p.id, p]))
         const replyMessageById = new Map((replyMessagesResult.data ?? []).map((m) => [m.id, m]))
         const trackById = new Map((tracksResult.data ?? []).map((t) => [t.id, t]))
@@ -688,9 +728,124 @@ const messagesRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, {
             conversationId,
             messages: enrichedMessages,
+            readStates: readStates ?? [],
             nextCursor: hasMore ? enrichedMessages[enrichedMessages.length - 1]?.created_at ?? null : null,
             hasMore,
         })
+    })
+
+    // group chats
+
+    app.post('/messages/group/create', { preHandler: app.authenticate }, async (req, res) => {
+        const parsedBody = createGroupChatSchema.parse(req.body) // list of user ids to add to the convo
+
+        const conversationId = generateRandomId(12)
+        const memberIds = Array.from(new Set([req.userId, ...parsedBody.memberIds]))
+
+        // now we need to add the conversation then add all members to the convo
+        const { error: convErr } = await supabase.from('conversations').insert({
+            id: conversationId,
+            name: parsedBody.name ?? null,
+        })
+
+        if (convErr) return sendError(res, "GROUP_CREATE_FAILED", convErr.message, 500)
+
+        // add each
+        for (const memberId of memberIds) {
+            const { error: memErr } = await supabase.from('conversation_members').insert({ conversation_id: conversationId, user_id: memberId })
+            if (memErr) return sendError(res, "GROUP_CREATE_FAILED", memErr.message, 500)
+        }
+
+        return sendSuccess(res, { conversationId })
+    })
+
+    app.post('/messages/group/:id/add', { preHandler: app.authenticate }, async (req, res) => {
+        // for v1.1, invites are not encessary, you can just add members regardless of whether they are private or public
+        // (since to add somebody you need ot be friends with them anyway)
+
+        const { id } = groupIdParamsSchema.parse(req.params)
+        const userToAdd = groupAddMemberSchema.parse(req.body)
+
+        // check if the authenticated user is a member of the group
+        const { data: member, error: memberError } = await supabase.from('conversation_members').select('conversation_id').eq('conversation_id', id).eq('user_id', req.userId).maybeSingle()
+        if (memberError) return sendError(res, "GROUP_ADD_FAILED", memberError.message, 500)
+        if (!member) return sendError(res, "GROUP_ADD_FAILED", "You are not a member of this group", 403)
+
+        // check if the user to add is a friend
+        const { data: friend, error: friendError } = await supabase.from('friends').select('user_a_id, user_b_id').eq('user_a_id', req.userId).eq('user_b_id', userToAdd.userId).maybeSingle()
+        if (friendError) return sendError(res, "GROUP_ADD_FAILED", friendError.message, 500)
+        if (!friend) return sendError(res, "GROUP_ADD_FAILED", "User is not a friend", 403)
+
+        // now finally add the user to the group
+        const { error: memErr } = await supabase.from('conversation_members').insert({ conversation_id: id, user_id: userToAdd.userId })
+        if (memErr) return sendError(res, "GROUP_ADD_FAILED", memErr.message, 500)
+
+        const { data: updatedMembers, error: updatedMembersError } = await supabase
+            .from('conversation_members')
+            .select('user_id')
+            .eq('conversation_id', id)
+
+        if (updatedMembersError) {
+            req.log.warn({ err: updatedMembersError }, "group add fetch members failed")
+        } else {
+            void sendGroupAddedNotification({
+                actorId: req.userId,
+                recipientId: userToAdd.userId,
+                conversationId: id,
+                participantIds: (updatedMembers ?? []).map((row) => row.user_id),
+            }).catch((notifyError) => {
+                req.log.warn({ err: notifyError }, "group add notification failed")
+            })
+        }
+
+        return sendSuccess(res, { success: true })
+    })
+
+    app.post('/messages/group/:id/name', { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = groupIdParamsSchema.parse(req.params)
+        const { name } = updateGroupNameSchema.parse(req.body)
+
+        const { data: member, error: memberError } = await supabase
+            .from('conversation_members')
+            .select('conversation_id')
+            .eq('conversation_id', id)
+            .eq('user_id', req.userId)
+            .maybeSingle()
+        if (memberError) return sendError(res, "GROUP_UPDATE_FAILED", memberError.message, 500)
+        if (!member) return sendError(res, "GROUP_UPDATE_FAILED", "You are not a member of this group", 403)
+
+        const { count, error: countError } = await supabase
+            .from('conversation_members')
+            .select('conversation_id', { count: 'exact', head: true })
+            .eq('conversation_id', id)
+        if (countError) return sendError(res, "GROUP_UPDATE_FAILED", countError.message, 500)
+        if ((count ?? 0) < 3) {
+            return sendError(res, "GROUP_UPDATE_FAILED", "Only group chats can be renamed", 400)
+        }
+
+        const { error: updateError } = await supabase
+            .from('conversations')
+            .update({ name })
+            .eq('id', id)
+        if (updateError) return sendError(res, "GROUP_UPDATE_FAILED", updateError.message, 500)
+
+        return sendSuccess(res, { success: true, conversationId: id, name })
+    })
+
+    // remove can come later like for v1.1 not needed maybe v1.1.1
+    app.post('/messages/group/:id/leave', { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = groupIdParamsSchema.parse(req.params)
+
+        // check if you are in the group
+        const { data: member, error: memberError } = await supabase.from('conversation_members').select('conversation_id').eq('conversation_id', id).eq('user_id', req.userId).maybeSingle()
+        if (memberError) return sendError(res, "GROUP_LEAVE_FAILED", memberError.message, 500)
+        if (!member) return sendError(res, "GROUP_LEAVE_FAILED", "You are not a member of this group", 403)
+
+        // now remove yourself from the group
+        const { error: memErr } = await supabase.from('conversation_members').delete().eq('conversation_id', id).eq('user_id', req.userId)
+        if (memErr) return sendError(res, "GROUP_LEAVE_FAILED", memErr.message, 500)
+
+        return sendSuccess(res, { success: true })
     })
 
 

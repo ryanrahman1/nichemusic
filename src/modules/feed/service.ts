@@ -104,7 +104,7 @@ export const FEED_CONFIG = {
         trackAffinityBoost: 20,
         artistAffinityBoost: 16,
         skipPenalty: 30,
-        viewedPenalty: 5,
+        viewedPenalty: 50,
         openedProfilePenalty: 4,
         floatingFeedItemBase: 25,
     },

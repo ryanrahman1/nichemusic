@@ -43,18 +43,49 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         const parsedBody = updateProfileSchema.parse(req.body)
 
-        const { data, error } = await supabase.schema('public').from('profiles').update({
-            display_name: parsedBody.displayName,
-            bio: parsedBody.bio,
-            location_name: parsedBody.location_name,
-            is_private: parsedBody.is_private,
-            profile_song_id: parsedBody.profile_song_id,
-            allow_messages_from: parsedBody.allow_messages_from,
-            allow_group_invites: parsedBody.allow_group_invites,
-            spotify_account: parsedBody.spotify_account,
-            instagram_handle: parsedBody.instagram_handle,
-            tiktok_handle: parsedBody.tiktok_handle,
-        }).eq('id', req.userId)
+        const patch: Record<string, unknown> = {}
+        if (parsedBody.displayName !== undefined) {
+            patch.display_name = parsedBody.displayName
+        }
+        if (parsedBody.bio !== undefined) {
+            patch.bio = parsedBody.bio
+        }
+        if (parsedBody.location_name !== undefined) {
+            patch.location_name = parsedBody.location_name
+        }
+        if (parsedBody.is_private !== undefined) {
+            patch.is_private = parsedBody.is_private
+        }
+        if (parsedBody.profile_song_id !== undefined) {
+            patch.profile_song_id = parsedBody.profile_song_id
+        }
+        if (parsedBody.allow_messages_from !== undefined) {
+            patch.allow_messages_from = parsedBody.allow_messages_from
+        }
+        if (parsedBody.allow_group_invites !== undefined) {
+            patch.allow_group_invites = parsedBody.allow_group_invites
+        }
+        if (parsedBody.spotify_account !== undefined) {
+            patch.spotify_account = parsedBody.spotify_account
+        }
+        if (parsedBody.instagram_handle !== undefined) {
+            patch.instagram_handle = parsedBody.instagram_handle
+        }
+        if (parsedBody.tiktok_handle !== undefined) {
+            patch.tiktok_handle = parsedBody.tiktok_handle
+        }
+
+        let profileUpdateError: { message: string } | null = null
+        if (Object.keys(patch).length > 0) {
+            const { error } = await supabase
+                .schema("public")
+                .from("profiles")
+                .update(patch)
+                .eq("id", req.userId)
+            if (error) {
+                profileUpdateError = error
+            }
+        }
 
         let avatarUpload: null | {
             uploadUrl: string
@@ -74,8 +105,8 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             }
         }
 
-        if (error) {
-            return sendError(res, "PROFILE_UPDATE_FAILED", error.message, 500)
+        if (profileUpdateError) {
+            return sendError(res, "PROFILE_UPDATE_FAILED", profileUpdateError.message, 500)
         }
 
         return sendSuccess(res, { user: { id: req.userId }, avatarUpload })

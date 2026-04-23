@@ -13,7 +13,7 @@ const shareRoutes: FastifyPluginAsync = async (app) => {
         const { data, error } = await supabase
             .schema("public")
             .from("artists")
-            .select("id, name, image_url")
+            .select("id, name, image_url, source, source_id")
             .eq("id", id)
             .maybeSingle()
 
@@ -23,6 +23,8 @@ const shareRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, {
             name: data.name,
             image_url: data.image_url,
+            source: data.source,
+            source_id: data.source_id,
         })
     })
 
@@ -32,7 +34,7 @@ const shareRoutes: FastifyPluginAsync = async (app) => {
         const { data, error } = await supabase
             .schema("public")
             .from("tracks")
-            .select("id, name, artwork_url, preview_url")
+            .select("id, name, artwork_url, preview_url, source, source_id")
             .eq("id", id)
             .maybeSingle()
 
@@ -43,6 +45,8 @@ const shareRoutes: FastifyPluginAsync = async (app) => {
             name: data.name,
             artwork_url: data.artwork_url,
             preview_url: data.preview_url,
+            source: data.source,
+            source_id: data.source_id,
         })
     })
 }

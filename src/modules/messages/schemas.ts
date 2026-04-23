@@ -54,15 +54,35 @@ export const getConversationParamsSchema = z.object({
 })
 
 export const getConversationQuerySchema = z.object({
-    cursor: z.string().datetime().optional(),
+    cursor: z.string().datetime({ offset: true }).optional(),
     limit: z.coerce.number().int().min(1).max(100).optional(),
 })
 
 export const ensureDmSchema = z.object({
     otherUserId: z.string().min(1),
+    name: z.string().trim().min(1).max(120).optional(),
 })
 
 export const unsendMessageSchema = z.object({
     conversationId: z.string().min(1),
     messageId: z.string().min(1),
+})
+
+export const createGroupChatSchema = z.object({
+    //conversation id filled by api
+    // no names for v1, just the people in the convo
+    memberIds: z.array(z.string().min(1)), // initial members to add; you can add more later
+    name: z.string().trim().min(1).max(120).optional(),
+})
+
+export const groupIdParamsSchema = z.object({
+    id: z.string().min(1),
+})
+
+export const groupAddMemberSchema = z.object({
+    userId: z.string().min(1),
+})
+
+export const updateGroupNameSchema = z.object({
+    name: z.string().trim().min(1).max(120),
 })

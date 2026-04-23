@@ -5,6 +5,7 @@ import { presignPostUploadSchema, createPostSchema, updatePostSchema, listCommen
 import { generateRandomId } from "../../lib/auth.js" // placeholder
 import { getPostMediaPresignedUrl, getPostVideoPresignedUrl } from "../../lib/image.js"
 import {
+    sendCommentLikeNotification,
     sendCommentReplyNotification,
     sendPostCommentNotification,
     sendPostCreateFanout,
@@ -12,6 +13,54 @@ import {
     sendPostRepostNotification,
 } from "../../lib/notifications.js"
 import { addViewerToComments, buildCommentContent, cleanPostForInsert, cleanPostForUpdate, decodeCommentCursor, encodeCommentCursor, getPostViewerContextMap } from "./helpers.js"
+
+type PostInteractionQuery = {
+    cursorCreatedAt?: string
+    cursorUserId?: string
+    limit: number
+}
+
+function parseInteractionQuery(raw: unknown): PostInteractionQuery {
+    const q = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
+    const cursorCreatedAt =
+        typeof q.cursorCreatedAt === "string" ? q.cursorCreatedAt : undefined
+    const cursorUserId =
+        typeof q.cursorUserId === "string" ? q.cursorUserId : undefined
+    const parsedLimit =
+        typeof q.limit === "string" ? Number(q.limit) : typeof q.limit === "number" ? q.limit : 20
+    const limit = Number.isFinite(parsedLimit)
+        ? Math.min(50, Math.max(1, Math.floor(parsedLimit)))
+        : 20
+    return { cursorCreatedAt, cursorUserId, limit }
+}
+
+async function ensureCanViewPost(postId: string, userId: string) {
+    const { data: post, error } = await supabase
+        .schema("public")
+        .from("posts")
+        .select("id, owner_id, visibility, group_id")
+        .eq("id", postId)
+        .maybeSingle()
+
+    if (error) throw new Error(error.message)
+    if (!post) throw new Error("Post not found")
+
+    const isOwner = post.owner_id === userId
+    if (post.visibility === "private" && !isOwner) {
+        throw new Error("Post is private")
+    }
+    if (post.visibility === "group" && !isOwner) {
+        const { data: member, error: memberError } = await supabase
+            .schema("public")
+            .from("group_members")
+            .select("user_id")
+            .eq("user_id", userId)
+            .eq("group_id", post.group_id)
+            .maybeSingle()
+        if (memberError) throw new Error(memberError.message)
+        if (!member) throw new Error("User is not in group")
+    }
+}
 
 const postsRoutes: FastifyPluginAsync = async (app) => {
 
@@ -163,6 +212,126 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { message: "Post reposted successfully", repost_data: repost_data })
 
+    })
+
+    app.get("/posts/:id/likes", { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = req.params as { id: string }
+        const { cursorCreatedAt, cursorUserId, limit } = parseInteractionQuery(req.query)
+
+        try {
+            await ensureCanViewPost(id, req.userId)
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Could not load likes"
+            const status = msg === "Post not found" ? 404 : 403
+            return sendError(res, "POST_LIKES_FETCH_FAILED", msg, status)
+        }
+
+        let query = supabase
+            .schema("public")
+            .from("post_likes")
+            .select(
+                "created_at, liker_id, user:profiles!post_likes_liker_id_fkey(id, username, display_name, avatar_url)"
+            )
+            .eq("post_id", id)
+            .order("created_at", { ascending: false })
+            .order("liker_id", { ascending: false })
+            .limit(limit + 1)
+
+        if (cursorCreatedAt && cursorUserId) {
+            query = query.or(
+                `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},liker_id.lt.${cursorUserId})`
+            )
+        }
+
+        const { data, error } = await query
+        if (error) return sendError(res, "POST_LIKES_FETCH_FAILED", error.message, 500)
+
+        const rows = data ?? []
+        const hasMore = rows.length > limit
+        const sliced = hasMore ? rows.slice(0, limit) : rows
+        const last = sliced[sliced.length - 1]
+
+        return sendSuccess(
+            res,
+            {
+                users: sliced.map((row) => ({
+                    ...(row.user ?? {}),
+                    interacted_at: row.created_at,
+                })),
+            },
+            {
+                pagination: {
+                    nextCursor: hasMore
+                        ? JSON.stringify({
+                            cursorCreatedAt: last?.created_at ?? null,
+                            cursorUserId: last?.liker_id ?? null,
+                        })
+                        : null,
+                    limit,
+                    hasMore,
+                },
+            }
+        )
+    })
+
+    app.get("/posts/:id/reposts", { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = req.params as { id: string }
+        const { cursorCreatedAt, cursorUserId, limit } = parseInteractionQuery(req.query)
+
+        try {
+            await ensureCanViewPost(id, req.userId)
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Could not load reposts"
+            const status = msg === "Post not found" ? 404 : 403
+            return sendError(res, "POST_REPOSTS_FETCH_FAILED", msg, status)
+        }
+
+        let query = supabase
+            .schema("public")
+            .from("post_reposts")
+            .select(
+                "created_at, reposter_id, user:profiles!post_reposts_reposter_id_fkey(id, username, display_name, avatar_url)"
+            )
+            .eq("post_id", id)
+            .order("created_at", { ascending: false })
+            .order("reposter_id", { ascending: false })
+            .limit(limit + 1)
+
+        if (cursorCreatedAt && cursorUserId) {
+            query = query.or(
+                `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},reposter_id.lt.${cursorUserId})`
+            )
+        }
+
+        const { data, error } = await query
+        if (error) return sendError(res, "POST_REPOSTS_FETCH_FAILED", error.message, 500)
+
+        const rows = data ?? []
+        const hasMore = rows.length > limit
+        const sliced = hasMore ? rows.slice(0, limit) : rows
+        const last = sliced[sliced.length - 1]
+
+        return sendSuccess(
+            res,
+            {
+                users: sliced.map((row) => ({
+                    ...(row.user ?? {}),
+                    interacted_at: row.created_at,
+                })),
+            },
+            {
+                pagination: {
+                    nextCursor: hasMore
+                        ? JSON.stringify({
+                            cursorCreatedAt: last?.created_at ?? null,
+                            cursorUserId: last?.reposter_id ?? null,
+                        })
+                        : null,
+                    limit,
+                    hasMore,
+                },
+            }
+        )
     })
 
     app.post('/posts/:id/unrepost', { preHandler: app.authenticate }, async (req, res) => {
@@ -524,6 +693,14 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
 
     app.post("/comments/:id/like", { preHandler: app.authenticate }, async (req, res) => {
         const { id } = req.params as { id: string }
+        const { data: comment, error: commentError } = await supabase
+            .schema("public")
+            .from("post_comments")
+            .select("id, owner_id, post_id")
+            .eq("id", id)
+            .maybeSingle()
+        if (commentError) return sendError(res, "COMMENT_LIKE_FAILED", commentError.message, 400)
+        if (!comment) return sendError(res, "COMMENT_LIKE_FAILED", "Comment not found", 404)
 
         const { error } = await supabase.rpc("like_comment", {
             actor_id: req.userId,
@@ -531,6 +708,12 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
 
         if (error) return sendError(res, "COMMENT_LIKE_FAILED", error.message, 400)
+
+        void sendCommentLikeNotification(req.userId, comment.owner_id, comment.id, comment.post_id).catch(
+            (notifyError) => {
+                req.log.warn({ err: notifyError }, "comment like notification failed")
+            }
+        )
 
         return sendSuccess(res, {
             liked: true,
