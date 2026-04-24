@@ -101,6 +101,7 @@ export const FEED_CONFIG = {
         commentWeight: 2,
         viewWeight: 0.02,
         videoBoost: 8,
+        pmoBoost: 15,
         trackAffinityBoost: 20,
         artistAffinityBoost: 16,
         skipPenalty: 30,
@@ -293,6 +294,7 @@ function scorePost(post: FeedPostCandidate, source: RankedPostEntry["source"], c
     if (source === "recommended") score += FEED_CONFIG.weights.recommendedBoost
 
     if (post.kind === "video") score += FEED_CONFIG.weights.videoBoost
+    if (post.kind === "pmo") score += FEED_CONFIG.weights.pmoBoost
 
     if (post.track_id && (ctx.likedTrackIds.has(post.track_id) || ctx.savedTrackIds.has(post.track_id))) {
         score += FEED_CONFIG.weights.trackAffinityBoost

@@ -55,7 +55,7 @@ app.register(authenticate)
 app.register(optionalAuthenticate)
 app.register(requestLoggerPlugin)
 app.register(cors, {
-    origin: ['https://nichemusic.app', 'https://www.nichemusic.app'],
+    origin: ['https://nichemusic.app', 'https://www.nichemusic.app', 'http://localhost:5173'],
     credentials: true,
 })
 
