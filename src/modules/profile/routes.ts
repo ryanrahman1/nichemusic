@@ -39,7 +39,7 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, { user: data })
     })
 
-    app.patch('/me', { preHandler: app.authenticate }, async (req, res) => {
+    app.post('/me/update', { preHandler: app.authenticate }, async (req, res) => {
 
         const parsedBody = updateProfileSchema.parse(req.body)
 

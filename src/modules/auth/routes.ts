@@ -354,7 +354,8 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     app.get("/session", { preHandler: app.authenticate }, async (req, res) => { // quick check if session is valid; if so return true
 
-        return sendSuccess(res, { authenticated: true }) // if the route works then it means that the session check succeeded, so just retunr true
+
+        return sendSuccess(res, { user: { id: req.userId } })
 
     }) 
 
