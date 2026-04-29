@@ -739,6 +739,47 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
+    app.get('/comments/:id/likes', { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = req.params as { id: string }
+        const { cursorCreatedAt, cursorUserId, limit } = parseInteractionQuery(req.query)
+
+        let query = supabase
+            .schema("public")
+            .from("comment_likes")
+            .select("created_at, liker_id, user:profiles!comment_likes_liker_id_fkey(id, username, avatar_url, display_name, followers_count)")
+            .eq("comment_id", id) // we can order by created at and by followers (so people with more followers are at the top)
+            .order("created_at", { ascending: false })
+            .order("followers_count", { ascending: false })
+            .limit(limit + 1)
+
+        if (cursorCreatedAt && cursorUserId) {
+            query = query.or(
+                `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},liker_id.lt.${cursorUserId})`
+            )
+        }
+        
+        const { data, error } = await query
+        if (error) return sendError(res, "COMMENT_LIKES_FETCH_FAILED", error.message, 500)
+
+        const rows = data ?? []
+        const hasMore = rows.length > limit
+        const sliced = hasMore ? rows.slice(0, limit) : rows
+        const last = sliced[sliced.length - 1]
+
+        return sendSuccess(res, {
+            users: sliced.map((row) => ({
+                ...(row.user ?? {}),
+                interacted_at: row.created_at,
+            })),
+        }, {
+            pagination: {
+                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorUserId: last.liker_id }) : null,
+                limit,
+                hasMore,
+            },
+        })
+    })
+
     app.post("/comments/:id/pin", { preHandler: app.authenticate }, async (req, res) => {
         const { id } = req.params as { id: string }
 
