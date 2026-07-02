@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify"
 import { supabase } from "../../config/supabase.js"
-import { updateProfileSchema, upsertStatusSchema } from "./schemas.js"
+import { updateProfileSchema, upsertStatusSchema, discographyQuerySchema } from "./schemas.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import {
@@ -15,7 +15,15 @@ import {
     buildFriendActivitiesFromFriendData,
     getViewerProfileContext,
     type ViewerProfileContext,
+    getViewerBlockSets,
+    isBlockedWithViewer,
+    filterBlockedUserIds,
     profilesForUserIdsOrdered,
+    canUpdateProfileType,
+    PROFILE_TYPE_COOLDOWN_DAYS,
+    fetchDiscographyPage,
+    getProfileByUsername,
+    checkFollowing,
 } from "./helpers.js"
 
 
@@ -37,6 +45,40 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return sendSuccess(res, { user: data })
+    })
+
+    app.get("/me/discography", { preHandler: app.authenticate }, async (req, res) => {
+        const { type, cursorReleaseDate, cursorType, cursorId, limit } = discographyQuerySchema.parse(req.query)
+
+        try {
+            const page = await fetchDiscographyPage({
+                userId: req.userId,
+                publicOnly: false,
+                type,
+                cursorReleaseDate,
+                cursorType,
+                cursorId,
+                limit,
+            })
+
+            return sendSuccess(
+                res,
+                {
+                    latest_release: page.latestRelease,
+                    items: page.items,
+                },
+                {
+                    pagination: {
+                        nextCursor: page.nextCursor,
+                        limit,
+                        hasMore: page.hasMore,
+                    },
+                }
+            )
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Discography fetch failed"
+            return sendError(res, "DISCOGRAPHY_FETCH_FAILED", message, 500)
+        }
     })
 
     app.post('/me/update', { preHandler: app.authenticate }, async (req, res) => {
@@ -73,6 +115,36 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         }
         if (parsedBody.tiktok_handle !== undefined) {
             patch.tiktok_handle = parsedBody.tiktok_handle
+        }
+
+        if (parsedBody.profile_type !== undefined) {
+            const { data: currentProfile, error: profileTypeFetchError } = await supabase
+                .schema("public")
+                .from("profiles")
+                .select("profile_type, type_updated_at")
+                .eq("id", req.userId)
+                .single()
+
+            if (profileTypeFetchError) {
+                return sendError(res, "PROFILE_FETCH_FAILED", profileTypeFetchError.message, 500)
+            }
+
+            const nextType = parsedBody.profile_type
+            const currentType = currentProfile?.profile_type
+
+            if (nextType !== currentType) {
+                if (!canUpdateProfileType(currentProfile?.type_updated_at)) {
+                    return sendError(
+                        res,
+                        "PROFILE_TYPE_COOLDOWN",
+                        `You can change your profile type again ${PROFILE_TYPE_COOLDOWN_DAYS} days after your last change.`,
+                        400
+                    )
+                }
+
+                patch.profile_type = nextType
+                patch.type_updated_at = new Date().toISOString()
+            }
         }
 
         let profileUpdateError: { message: string } | null = null
@@ -131,6 +203,18 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "USER_NOT_FOUND", "User not found", 404)
         }
 
+        if (req.userId !== undefined && req.userId !== data.id) {
+            try {
+                const blockSets = await getViewerBlockSets(req.userId)
+                if (isBlockedWithViewer(blockSets, data.id)) {
+                    return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Block check failed"
+                return sendError(res, "PROFILE_FETCH_FAILED", message, 500)
+            }
+        }
+
         let viewer: ViewerProfileContext | null = null
         if (req.userId !== undefined) {
             try {
@@ -163,6 +247,81 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         }
 
         return sendSuccess(res, { user: data, viewer })
+    })
+
+    app.get("/users/:username/discography", { preHandler: app.optionalAuthenticate }, async (req, res) => {
+        const { username } = req.params as { username: string }
+        const { type, cursorReleaseDate, cursorType, cursorId, limit } = discographyQuerySchema.parse(req.query)
+
+        let profile: { id: string; is_private: boolean | null } | null
+        try {
+            profile = await getProfileByUsername(username)
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Profile lookup failed"
+            return sendError(res, "PROFILE_FETCH_FAILED", message, 500)
+        }
+
+        if (!profile) {
+            return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+        }
+
+        if (req.userId && req.userId !== profile.id) {
+            try {
+                const blockSets = await getViewerBlockSets(req.userId)
+                if (isBlockedWithViewer(blockSets, profile.id)) {
+                    return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Block check failed"
+                return sendError(res, "DISCOGRAPHY_FETCH_FAILED", message, 500)
+            }
+        }
+
+        if (profile.is_private && profile.id !== req.userId) {
+            if (!req.userId) {
+                return sendError(res, "FORBIDDEN", "User is private", 403)
+            }
+
+            try {
+                const isFollowing = await checkFollowing(req.userId, profile.id)
+                if (!isFollowing) {
+                    return sendError(res, "FORBIDDEN", "User is private", 403)
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Follow check failed"
+                return sendError(res, "DISCOGRAPHY_FETCH_FAILED", message, 500)
+            }
+        }
+
+        try {
+            const page = await fetchDiscographyPage({
+                userId: profile.id,
+                publicOnly: true,
+                type,
+                cursorReleaseDate,
+                cursorType,
+                cursorId,
+                limit,
+            })
+
+            return sendSuccess(
+                res,
+                {
+                    latest_release: page.latestRelease,
+                    items: page.items,
+                },
+                {
+                    pagination: {
+                        nextCursor: page.nextCursor,
+                        limit,
+                        hasMore: page.hasMore,
+                    },
+                }
+            )
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Discography fetch failed"
+            return sendError(res, "DISCOGRAPHY_FETCH_FAILED", message, 500)
+        }
     })
 
     app.post('/users/:username/follow', { preHandler: app.authenticate }, async (req, res) => {
@@ -257,7 +416,12 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         const ids = (data ?? []).map((row) => row.follower_id)
         try {
-            const followers = await profilesForUserIdsOrdered(ids)
+            let filteredIds = ids
+            if (req.userId) {
+                const blockSets = await getViewerBlockSets(req.userId)
+                filteredIds = filterBlockedUserIds(blockSets, ids)
+            }
+            const followers = await profilesForUserIdsOrdered(filteredIds)
             return sendSuccess(res, { followers })
         } catch (e) {
             const message = e instanceof Error ? e.message : "Failed to load followers"
@@ -275,13 +439,30 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         if (!otherUser) { return sendError(res, "USER_NOT_FOUND", "User not found", 404) }
 
+        if (req.userId && req.userId !== otherUser.id) {
+            try {
+                const blockSets = await getViewerBlockSets(req.userId)
+                if (isBlockedWithViewer(blockSets, otherUser.id)) {
+                    return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Block check failed"
+                return sendError(res, "FOLLOWERS_FETCH_FAILED", message, 500)
+            }
+        }
+
         const { data, error } = await supabase.schema('public').from('follows').select('follower_id').eq('following_id', otherUser.id)
 
         if (error) { return sendError(res, "FOLLOWERS_FETCH_FAILED", error.message, 500) }
 
         const ids = (data ?? []).map((row) => row.follower_id)
         try {
-            const followers = await profilesForUserIdsOrdered(ids)
+            let filteredIds = ids
+            if (req.userId) {
+                const blockSets = await getViewerBlockSets(req.userId)
+                filteredIds = filterBlockedUserIds(blockSets, ids)
+            }
+            const followers = await profilesForUserIdsOrdered(filteredIds)
             return sendSuccess(res, { followers })
         } catch (e) {
             const message = e instanceof Error ? e.message : "Failed to load followers"
@@ -296,7 +477,9 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
 
         const ids = (data ?? []).map((row) => row.following_id)
         try {
-            const following = await profilesForUserIdsOrdered(ids)
+            const blockSets = await getViewerBlockSets(req.userId)
+            const filteredIds = filterBlockedUserIds(blockSets, ids)
+            const following = await profilesForUserIdsOrdered(filteredIds)
             return sendSuccess(res, { following })
         } catch (e) {
             const message = e instanceof Error ? e.message : "Failed to load following"
@@ -313,12 +496,29 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
         if (otherUserError) { return sendError(res, "USER_LOOKUP_FAILED", otherUserError.message, 500) }
         if (!otherUser) { return sendError(res, "USER_NOT_FOUND", "User not found", 404) }
 
+        if (req.userId && req.userId !== otherUser.id) {
+            try {
+                const blockSets = await getViewerBlockSets(req.userId)
+                if (isBlockedWithViewer(blockSets, otherUser.id)) {
+                    return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+                }
+            } catch (e) {
+                const message = e instanceof Error ? e.message : "Block check failed"
+                return sendError(res, "FOLLOWING_FETCH_FAILED", message, 500)
+            }
+        }
+
         const { data, error } = await supabase.schema('public').from('follows').select('following_id').eq('follower_id', otherUser.id)
         if (error) { return sendError(res, "FOLLOWING_FETCH_FAILED", error.message, 500) }
 
         const ids = (data ?? []).map((row) => row.following_id)
         try {
-            const following = await profilesForUserIdsOrdered(ids)
+            let filteredIds = ids
+            if (req.userId) {
+                const blockSets = await getViewerBlockSets(req.userId)
+                filteredIds = filterBlockedUserIds(blockSets, ids)
+            }
+            const following = await profilesForUserIdsOrdered(filteredIds)
             return sendSuccess(res, { following })
         } catch (e) {
             const message = e instanceof Error ? e.message : "Failed to load following"
@@ -439,10 +639,35 @@ const profileRoutes: FastifyPluginAsync = async (app) => {
     })
     
     app.get("/me/follow_requests", { preHandler: app.authenticate }, async (req, res) => {
-        const { data, error } = await supabase.schema('public').from('follow_requests').select('follower_id, status').eq('following_id', req.userId).eq('status', 'sent')
+        const { data, error } = await supabase.schema('public').from('follow_requests').select('follower_id, status, created_at').eq('following_id', req.userId).eq('status', 'sent')
 
         if (error) { return sendError(res, "FOLLOW_REQUESTS_FETCH_FAILED", error.message, 500) }
-        return sendSuccess(res, { followRequests: data })
+
+        const rows = data ?? []
+        const followerIds = rows.map((row) => row.follower_id as string)
+
+        try {
+            const profiles = await profilesForUserIdsOrdered(followerIds)
+            const profileById = new Map(profiles.map((profile) => [profile.id, profile]))
+
+            return sendSuccess(res, {
+                followRequests: rows
+                    .map((row) => {
+                        const user = profileById.get(row.follower_id as string)
+                        if (!user) return null
+                        return {
+                            followerId: row.follower_id,
+                            status: row.status,
+                            createdAt: row.created_at,
+                            user,
+                        }
+                    })
+                    .filter(Boolean),
+            })
+        } catch (e) {
+            const message = e instanceof Error ? e.message : "Failed to load follow requests"
+            return sendError(res, "FOLLOW_REQUESTS_FETCH_FAILED", message, 500)
+        }
     })
 
     app.post("/me/follows/:userId/accept", { preHandler: app.authenticate }, async (req, res) => {

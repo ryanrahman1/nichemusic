@@ -14,11 +14,34 @@ const R2 = new S3Client({
 
 const MAX_IMAGE_BYTES = 30 * 1024 * 1024
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024 // 500MB
+const MAX_AUDIO_BYTES = 500 * 1024 * 1024 // 500MB
+const STREAM_PUBLIC_BASE_URL = "https://stream.nichemusic.app"
+
+export function normalizePublicAssetUrl(url: string | null | undefined): string | null {
+    if (!url) return null
+
+    const trimmed = url.trim()
+    if (!trimmed) return null
+    if (/^https?:\/\//i.test(trimmed)) return trimmed
+
+    const withoutHost = trimmed.replace(/^stream\.nichemusic\.app\/?/i, "").replace(/^\/+/, "")
+    return `${STREAM_PUBLIC_BASE_URL}/${withoutHost}`
+}
+
+export async function fetchAssetHead(url: string): Promise<Response> {
+    const normalized = normalizePublicAssetUrl(url)
+    if (!normalized) {
+        throw new Error("Invalid asset URL")
+    }
+
+    return fetch(normalized, { method: "HEAD" })
+}
 
 type UploadFormat = "jpeg" | "webp" | "png" | "avif"
 type VideoFormat = "mp4" | "webm" | "mov" | "mkv"
+type MusicFormat = "mp3" | "m4a" | "wav" | "flac" | "aac"
 
-interface PresignedUploadResult {
+export interface PresignedUploadResult {
     uploadUrl: string
     objectKey: string
     publicUrl: string
@@ -53,6 +76,36 @@ function extensionFor(format: UploadFormat): string {
             return "png"
         case "avif":
             return "avif"
+    }
+}
+
+function extensionForMusic(format: MusicFormat): string {
+    switch (format) {
+        case "mp3":
+            return "mp3"
+        case "m4a":
+            return "m4a"
+        case "wav":
+            return "wav"
+        case "flac":
+            return "flac"
+        case "aac":
+            return "aac"
+    }
+}
+
+function contentTypeForMusic(format: MusicFormat): string {
+    switch (format) {
+        case "mp3":
+            return "audio/mpeg"
+        case "m4a":
+            return "audio/mp4"
+        case "wav":
+            return "audio/wav"
+        case "flac":
+            return "audio/flac"
+        case "aac":
+            return "audio/aac"
     }
 }
 
@@ -96,6 +149,119 @@ export async function getAvatarPresignedUrl(userId: string): Promise<PresignedUp
         Key: objectKey,
         ContentType: contentType,
         CacheControl: "public, max-age=31536000, immutable",
+    })
+
+    const uploadUrl = await getSignedUrl(R2, command, {
+        expiresIn: 60 * 5, // 5 minutes
+    })
+
+    const publicUrl = `${env.r2.publicBaseUrl}/${publicBucket}/${objectKey}`
+
+    return {
+        uploadUrl,
+        objectKey,
+        publicUrl,
+        contentType,
+        maxBytes: MAX_IMAGE_BYTES,
+    }
+}
+
+export async function getNicheTrackImagePresignedUrl(trackId: string, format: UploadFormat): Promise<PresignedUploadResult> {
+    const bucketName = 'music'
+    const extension = extensionFor(format)
+    const contentType = contentTypeFor(format)
+    const objectKey = `${trackId}/images/image-${generateRandomId(12)}.${extension}`
+
+    const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable", // 1 yr
+    })
+
+    const uploadUrl = await getSignedUrl(R2, command, {
+        expiresIn: 60 * 5, // 5 minutes
+    })
+
+    const publicUrl = `${STREAM_PUBLIC_BASE_URL}/${objectKey}`
+
+    return {
+        uploadUrl,
+        objectKey,
+        publicUrl,
+        contentType,
+        maxBytes: MAX_IMAGE_BYTES,
+    }
+}
+
+export async function getNicheTrackMusicPresignedUrl(trackId: string, format: MusicFormat): Promise<PresignedUploadResult> {
+    const bucketName = 'music'
+    const extension = extensionForMusic(format)
+    const contentType = contentTypeForMusic(format)
+    const objectKey = `${trackId}/audio/track-${generateRandomId(12)}.${extension}`
+
+    const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable", // 1 yr
+    })
+
+    const uploadUrl = await getSignedUrl(R2, command, {
+        expiresIn: 60 * 5, // 5 minutes
+    })
+
+    const publicUrl = `${STREAM_PUBLIC_BASE_URL}/${objectKey}`
+
+    return {
+        uploadUrl,
+        objectKey,
+        publicUrl,
+        contentType,
+        maxBytes: MAX_AUDIO_BYTES,
+    }
+}
+
+export async function getNicheTrackMomentPresignedUrl(trackId: string, format: VideoFormat): Promise<PresignedUploadResult> {
+    const bucketName = 'music'
+    const extension = extensionForVideo(format)
+    const contentType = contentTypeForVideo(format)
+    const objectKey = `${trackId}/video/moment-${generateRandomId(12)}.${extension}`
+
+    const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable", // 1 yr
+    })
+
+    const uploadUrl = await getSignedUrl(R2, command, {
+        expiresIn: 60 * 5, // 5 minutes
+    })
+
+    const publicUrl = `${STREAM_PUBLIC_BASE_URL}/${objectKey}`
+
+    return {
+        uploadUrl,
+        objectKey,
+        publicUrl,
+        contentType,
+        maxBytes: MAX_VIDEO_BYTES,
+    }
+}
+
+export async function getPlaylistImagePresignedUrl(playlistId: string, format: UploadFormat): Promise<PresignedUploadResult> {
+    const bucketName = 'playlist-covers'
+    const publicBucket = 'covers/playlists'
+    const extension = extensionFor(format)
+    const contentType = contentTypeFor(format)
+    const objectKey=`${playlistId}/cover-${generateRandomId(12)}.${extension}`
+
+    const command = new PutObjectCommand({
+        Bucket: bucketName, 
+        Key: objectKey,
+        ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable", // 1 yr
     })
 
     const uploadUrl = await getSignedUrl(R2, command, {

@@ -12,6 +12,9 @@ export type NotificationKind =
     | "post_comment"
     | "comment_like"
     | "comment_reply"
+    | "track_comment"
+    | "track_comment_like"
+    | "track_comment_reply"
     | "post_repost"
     | "new_post_from_following"
     | "new_video_from_following"
@@ -20,6 +23,7 @@ type NotificationEntityType =
     | "profile"
     | "post"
     | "comment"
+    | "track"
     | "follow_request"
     | "system"
 
@@ -139,9 +143,15 @@ function isNotificationEnabledForKind(
             return prefs.post_likes_enabled
         case "post_comment":
             return prefs.post_comments_enabled
+        case "track_comment":
+            return prefs.post_comments_enabled
         case "comment_like":
             return prefs.comment_replies_enabled
+        case "track_comment_like":
+            return prefs.comment_replies_enabled
         case "comment_reply":
+            return prefs.comment_replies_enabled
+        case "track_comment_reply":
             return prefs.comment_replies_enabled
         case "post_repost":
             return prefs.post_reposts_enabled
@@ -323,15 +333,30 @@ function buildNotificationCopy(params: {
                 title: "Niche Music",
                 body: `@${params.actorUsername} commented on your post`,
             }
+        case "track_comment":
+            return {
+                title: "Niche Music",
+                body: `@${params.actorUsername} commented on your track`,
+            }
         case "comment_like":
             return {
                 title: "Niche Music",
                 body: `@${params.actorUsername} liked your comment`,
             }
+        case "track_comment_like":
+            return {
+                title: "Niche Music",
+                body: `@${params.actorUsername} liked your comment on a track`,
+            }
         case "comment_reply":
             return {
                 title: "Niche Music",
                 body: `@${params.actorUsername} replied to your comment`,
+            }
+        case "track_comment_reply":
+            return {
+                title: "Niche Music",
+                body: `@${params.actorUsername} replied to your comment on a track`,
             }
         case "post_repost":
             return {
@@ -565,6 +590,54 @@ export async function sendCommentLikeNotification(
         entityType: "comment",
         entityId: commentId,
         data: { commentId, postId },
+    })
+}
+
+export async function sendNicheTrackCommentNotification(
+    actorId: string,
+    recipientId: string,
+    trackId: string,
+    commentId: string
+) {
+    return createAndSendSingleRecipientNotification({
+        recipientId,
+        actorId,
+        kind: "track_comment",
+        entityType: "track",
+        entityId: trackId,
+        data: { trackId, commentId },
+    })
+}
+
+export async function sendNicheTrackCommentReplyNotification(
+    actorId: string,
+    recipientId: string,
+    commentId: string,
+    trackId: string
+) {
+    return createAndSendSingleRecipientNotification({
+        recipientId,
+        actorId,
+        kind: "track_comment_reply",
+        entityType: "comment",
+        entityId: commentId,
+        data: { trackId, commentId },
+    })
+}
+
+export async function sendNicheTrackCommentLikeNotification(
+    actorId: string,
+    recipientId: string,
+    commentId: string,
+    trackId: string
+) {
+    return createAndSendSingleRecipientNotification({
+        recipientId,
+        actorId,
+        kind: "track_comment_like",
+        entityType: "comment",
+        entityId: commentId,
+        data: { trackId, commentId },
     })
 }
 

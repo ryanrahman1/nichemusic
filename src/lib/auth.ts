@@ -28,12 +28,16 @@ export type OAuthProvider = "google" | "apple"
 export type SessionAuthResult = {
     sessionId: string
     userId: string
+    emailVerified: boolean
 }
+
+export type ProfileType = "artist" | "user" | "producer" | "dj"
 
 export type SignupEmailInput = {
     email: string
     password: string
     username: string
+    profileType?: ProfileType
     avatarUrl?: string | undefined
 }
 
@@ -41,12 +45,20 @@ export type SignupOAuthInput = {
     provider: OAuthProvider
     signupToken: string
     username: string
+    profileType?: ProfileType
+}
+
+export type UsernameAvailabilityResult = {
+    available: boolean
+    reason?: "invalid" | "taken"
+    message?: string
 }
 
 export type AuthSuccess = {
     kind: "authenticated"
     userId: string
     sessionToken: string
+    avatarUrl: string | null
 }
 
 export type OAuthNeedsSignup = {
@@ -69,7 +81,8 @@ type OAuthSignupStateRecord = {
 }
 
 export function generateRandomId(bytes = 16): string {
-    return crypto.randomBytes(bytes).toString("base64url")
+    // generate random id, filter out dashes, underscores, and plus signs to make it more URL-friendly
+    return crypto.randomBytes(bytes).toString("base64url").replace(/[-_]/g, "")
 }
 
 export function sha256(input: string): string {
@@ -90,8 +103,21 @@ function normalizeEmail(email: string): string {
     return email.trim().toLowerCase()
 }
 
+const USERNAME_PATTERN = /^[a-z0-9_.]{3,30}$/
+
 function normalizeUsername(username: string): string {
-    return username.trim()
+    return username.trim().toLowerCase()
+}
+
+export function validateUsernameFormat(username: string): string | null {
+    const normalized = normalizeUsername(username)
+    if (!normalized) return "Username is required"
+    if (normalized.length < 3) return "Username must be at least 3 characters"
+    if (normalized.length > 30) return "Username must be at most 30 characters"
+    if (!USERNAME_PATTERN.test(normalized)) {
+        return "Username may only contain lowercase letters, numbers, underscores, and periods"
+    }
+    return null
 }
 
 function futureIso(msFromNow: number): string {
@@ -106,6 +132,93 @@ function requireValidPassword(password: string) {
     if (!password || password.length < 8) {
         throw new Error("Password must be at least 8 characters")
     }
+    if (!/[A-Z]/.test(password)) {
+        throw new Error("Password must contain at least one uppercase letter")
+    }
+    if (!/[0-9]/.test(password)) {
+        throw new Error("Password must contain at least one number")
+    }
+}
+
+function isUniqueViolation(error: { code?: string; message?: string } | null | undefined): boolean {
+    return error?.code === "23505"
+}
+
+function mapInsertUserError(error: { code?: string; message?: string }): Error {
+    if (isUniqueViolation(error)) {
+        const message = error.message ?? ""
+        if (message.includes("users_email_key") || message.includes("email")) {
+            return new SignupConflictError("EMAIL_TAKEN", "An account with this email already exists")
+        }
+        if (message.includes("users_username_key") || message.includes("username")) {
+            return new SignupConflictError("USERNAME_TAKEN", "This username is already taken")
+        }
+        return new SignupConflictError("CONFLICT", "Account already exists")
+    }
+    return new Error(error?.message ?? "Failed to create account")
+}
+
+export class PasswordResetSamePasswordError extends Error {
+    readonly code = "PASSWORD_RESET_SAME_AS_CURRENT" as const
+
+    constructor(message = "Your new password must be different from your current password.") {
+        super(message)
+        this.name = "PasswordResetSamePasswordError"
+    }
+}
+
+export class SignupConflictError extends Error {
+    constructor(
+        public readonly code: "EMAIL_TAKEN" | "USERNAME_TAKEN" | "CONFLICT",
+        message: string
+    ) {
+        super(message)
+        this.name = "SignupConflictError"
+    }
+}
+
+async function setProfileType(userId: string, profileType: ProfileType): Promise<void> {
+    const { error } = await supabase
+        .schema("public")
+        .from("profiles")
+        .update({
+            profile_type: profileType,
+            type_updated_at: new Date().toISOString(),
+        })
+        .eq("id", userId)
+
+    if (error) throw new Error(error.message)
+}
+
+export async function checkUsernameAvailability(username: string): Promise<UsernameAvailabilityResult> {
+    const normalized = normalizeUsername(username)
+    const formatError = validateUsernameFormat(normalized)
+    if (formatError) {
+        return {
+            available: false,
+            reason: "invalid",
+            message: formatError,
+        }
+    }
+
+    const { data, error } = await supabase
+        .schema("authn")
+        .from("users")
+        .select("id")
+        .eq("username", normalized)
+        .maybeSingle()
+
+    if (error) throw new Error(error.message)
+
+    if (data) {
+        return {
+            available: false,
+            reason: "taken",
+            message: "This username is already taken",
+        }
+    }
+
+    return { available: true }
 }
 
 async function getUserByEmail(email: string) {
@@ -151,8 +264,8 @@ async function insertUser(params: {
             email_verified: params.emailVerified,
             avatar_url: params.avatarUrl ?? null,
         })
-        
-    if (error) throw new Error(error.message)
+
+    if (error) throw mapInsertUserError(error)
     return userId
 }
 
@@ -230,7 +343,7 @@ export async function authenticateSessionToken(rawToken: string): Promise<Sessio
     const { data, error } = await supabase
         .schema("authn")
         .from("sessions")
-        .select("id, user_id, expires_at")
+        .select("id, user_id, expires_at, users!inner(email_verified)")
         .eq("token_hash", tokenHash)
         .maybeSingle()
 
@@ -256,9 +369,13 @@ export async function authenticateSessionToken(rawToken: string): Promise<Sessio
             .eq("id", data.id)
     }
 
+    const users = data.users
+    const user = Array.isArray(users) ? users[0] : users
+
     return {
         sessionId: data.id,
         userId: data.user_id,
+        emailVerified: user?.email_verified === true,
     }
 }
 
@@ -332,9 +449,12 @@ export async function signupWithEmail(
 ): Promise<AuthSuccess> {
     const email = normalizeEmail(input.email)
     const username = normalizeUsername(input.username)
+    const profileType: ProfileType = input.profileType ?? "user"
 
     requireNonEmpty(email, "Email is required")
     requireNonEmpty(username, "Username is required")
+    const usernameError = validateUsernameFormat(username)
+    if (usernameError) throw new Error(usernameError)
     requireValidPassword(input.password)
 
     let userId: string | null = null
@@ -347,6 +467,7 @@ export async function signupWithEmail(
         })
 
         await insertPassword(userId, input.password)
+        await setProfileType(userId, profileType)
 
         const sessionToken = await createSession(userId, meta?.ipAddress, meta?.userAgent)
 
@@ -354,6 +475,7 @@ export async function signupWithEmail(
             kind: "authenticated",
             userId,
             sessionToken,
+            avatarUrl: null,
         }
     } catch (error) {
         if (userId) await deleteUserById(userId)
@@ -374,6 +496,7 @@ export async function loginWithEmail(
         .select(`
       id,
       email,
+      avatar_url,
       user_passwords (
         password_hash
       )
@@ -403,6 +526,7 @@ export async function loginWithEmail(
         kind: "authenticated",
         userId: data.id,
         sessionToken,
+        avatarUrl: data.avatar_url,
     }
 }
 
@@ -628,7 +752,10 @@ export async function signupWithOAuth(
     meta?: { ipAddress?: string | undefined; userAgent?: string | undefined }
 ): Promise<AuthSuccess> {
     const username = normalizeUsername(input.username)
+    const profileType: ProfileType = input.profileType ?? "user"
     requireNonEmpty(username, "Username is required")
+    const usernameError = validateUsernameFormat(username)
+    if (usernameError) throw new Error(usernameError)
 
     const pending = await consumeOAuthSignupState(input.signupToken)
 
@@ -643,6 +770,7 @@ export async function signupWithOAuth(
             kind: "authenticated",
             userId: existingOAuth.user_id,
             sessionToken,
+            avatarUrl: null,
         }
     }
 
@@ -669,12 +797,15 @@ export async function signupWithOAuth(
             providerUserId: pending.provider_user_id,
         })
 
+        await setProfileType(userId, profileType)
+
         const sessionToken = await createSession(userId, meta?.ipAddress, meta?.userAgent)
 
         return {
             kind: "authenticated",
             userId,
             sessionToken,
+            avatarUrl: null,
         }
     } catch (error) {
         if (userId) await deleteUserById(userId)
@@ -701,6 +832,7 @@ export async function handleGoogleCallback(
             kind: "authenticated",
             userId: existingOAuth.user_id,
             sessionToken,
+            avatarUrl: null,
         }
     }
 
@@ -734,6 +866,7 @@ export async function handleAppleCallback(
             kind: "authenticated",
             userId: existingOAuth.user_id,
             sessionToken,
+            avatarUrl: null,
         }
     }
 
@@ -806,10 +939,34 @@ export async function verifyEmailToken(rawToken: string): Promise<string> {
     return data.user_id
 }
 
+async function getUserPasswordHash(userId: string): Promise<string | null> {
+    const { data, error } = await supabase
+        .schema("authn")
+        .from("user_passwords")
+        .select("password_hash")
+        .eq("user_id", userId)
+        .maybeSingle()
+
+    if (error) throw new Error(error.message)
+    return data?.password_hash ?? null
+}
+
 export async function createPasswordResetToken(email: string): Promise<string | null> {
     const normalizedEmail = normalizeEmail(email)
     const user = await getUserByEmail(normalizedEmail)
     if (!user) return null
+
+    const existingPasswordHash = await getUserPasswordHash(user.id)
+    if (!existingPasswordHash) return null
+
+    const now = new Date().toISOString()
+
+    await supabase
+        .schema("authn")
+        .from("password_reset_tokens")
+        .update({ used_at: now })
+        .eq("user_id", user.id)
+        .is("used_at", null)
 
     const rawToken = generateRandomId(32)
     const tokenHash = sha256(rawToken)
@@ -844,6 +1001,14 @@ export async function resetPasswordWithToken(rawToken: string, newPassword: stri
     if (data.used_at) throw new Error("Invalid or expired reset token")
     if (new Date(data.expires_at).getTime() <= Date.now()) {
         throw new Error("Invalid or expired reset token")
+    }
+
+    const existingPasswordHash = await getUserPasswordHash(data.user_id)
+    if (existingPasswordHash) {
+        const isSamePassword = await verifyPassword(existingPasswordHash, newPassword)
+        if (isSamePassword) {
+            throw new PasswordResetSamePasswordError()
+        }
     }
 
     const passwordHash = await hashPassword(newPassword)

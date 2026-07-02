@@ -6,7 +6,7 @@ import multipart from "@fastify/multipart"
 import rateLimit from "@fastify/rate-limit"
 import websocket from "@fastify/websocket"
 
-import { authenticate, optionalAuthenticate } from "./plugins/authenticate.js"
+import { authenticate, optionalAuthenticate, preAuthenticate } from "./plugins/authenticate.js"
 import requestLoggerPlugin from "./plugins/requestLogger.js"
 import env from "./config/env.js"
 
@@ -15,14 +15,18 @@ import authRoutes from "./modules/auth/routes.js"
 import profileRoutes from "./modules/profile/routes.js"
 import postsRoutes from "./modules/posts/routes.js"
 import groupsRoutes from "./modules/groups/routes.js"
-import musicRoutes from "./modules/music/routes.js"
+import {musicRoutes, nicheMusicRoutes} from "./modules/music/routes.js"
 import notificationsRoutes from "./modules/notifications/routes.js"
 import searchRoutes from "./modules/search/routes.js"
 import feedRoutes from "./modules/feed/routes.js"
 import shareRoutes from "./modules/share/routes.js"
 import messagesRoutes from "./modules/messages/routes.js"
 import moderationRoutes from "./modules/moderation/routes.js"
+import musicMatchesRoutes from "./modules/music-matches/routes.js"
 import realtimeRoutes from "./global/realtime/realtime.js"
+import playlistsRoutes from "./modules/playlists/routes.js"
+import badgesRoutes from "./modules/badges/routes.js"
+import gamesRoutes from "./modules/games/routes.js"
 import { sendSuccess } from "./global/response.js"
 
 
@@ -52,10 +56,17 @@ app.register(cookie)
 app.register(multipart)
 app.register(websocket)
 app.register(authenticate)
+app.register(preAuthenticate)
 app.register(optionalAuthenticate)
 app.register(requestLoggerPlugin)
 app.register(cors, {
-    origin: ['https://nichemusic.app', 'https://www.nichemusic.app', 'http://localhost:5173'],
+    origin: [
+        'https://nichemusic.app',
+        'https://www.nichemusic.app',
+        'https://auth.nichemusic.app',
+        'http://localhost:5173',
+        'http://127.0.0.1:8788',
+    ],
     credentials: true,
 })
 
@@ -72,14 +83,18 @@ app.register(profileRoutes)
 app.register(postsRoutes)
 app.register(groupsRoutes)
 app.register(musicRoutes)
+app.register(nicheMusicRoutes)
 app.register(notificationsRoutes)
 app.register(searchRoutes)
 app.register(feedRoutes)
 app.register(shareRoutes, { prefix: "/public/share" })
 app.register(messagesRoutes)
 app.register(moderationRoutes)
+app.register(musicMatchesRoutes)
 app.register(realtimeRoutes)
-
+app.register(playlistsRoutes)
+app.register(badgesRoutes)
+app.register(gamesRoutes)
 app.get("/health", (req, res) => {
     return sendSuccess(res, { healthy: true })
 })

@@ -12,7 +12,8 @@ import {
     sendPostLikeNotification,
     sendPostRepostNotification,
 } from "../../lib/notifications.js"
-import { addViewerToComments, buildCommentContent, cleanPostForInsert, cleanPostForUpdate, decodeCommentCursor, encodeCommentCursor, getPostViewerContextMap } from "./helpers.js"
+import { addViewerToComments, buildCommentContent, cleanPostForInsert, cleanPostForUpdate, decodeCommentCursor, encodeCommentCursor, getPostViewerContextMap, POST_LIST_SELECT } from "./helpers.js"
+import { encodePostListCursor, normalizeQueryDateTime, toUtcZulu } from "../../lib/datetime.js"
 
 type PostInteractionQuery = {
     cursorCreatedAt?: string
@@ -23,7 +24,7 @@ type PostInteractionQuery = {
 function parseInteractionQuery(raw: unknown): PostInteractionQuery {
     const q = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>
     const cursorCreatedAt =
-        typeof q.cursorCreatedAt === "string" ? q.cursorCreatedAt : undefined
+        typeof q.cursorCreatedAt === "string" ? normalizeQueryDateTime(q.cursorCreatedAt) : undefined
     const cursorUserId =
         typeof q.cursorUserId === "string" ? q.cursorUserId : undefined
     const parsedLimit =
@@ -41,12 +42,12 @@ async function ensureCanViewPost(postId: string, userId: string) {
     const { data: post, error } = await supabase
         .schema("public")
         .from("posts")
-        .select("id, owner_id, visibility, group_id")
+        .select("id, owner_id, visibility, group_id, deleted_at")
         .eq("id", postId)
         .maybeSingle()
 
     if (error) throw new Error(error.message)
-    if (!post) throw new Error("Post not found")
+    if (!post || post.deleted_at) throw new Error("Post not found")
 
     const isOwner = post.owner_id === userId
     if (post.visibility === "private" && !isOwner) {
@@ -73,15 +74,13 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         const { data, error } = await supabase
             .schema("public")
             .from("posts")
-            .select(`
-            *,
-            owner:profiles!posts_owner_id_fkey(id, username, avatar_url),
-            group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))
-          `)
+            .select(POST_LIST_SELECT)
             .eq("id", id)
+            .is("deleted_at", null)
             .single()
 
         if (error) return sendError(res, "POST_FETCH_FAILED", error.message, 500)
+        if (!data) return sendError(res, "POST_NOT_FOUND", "Post not found", 404)
 
         const isOwner = !!req.userId && data.owner_id === req.userId
 
@@ -384,6 +383,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
                 kind: parsedBody.kind,
                 visibility: parsedBody.visibility,
                 trackId: parsedBody.trackId ?? null,
+                nicheTrackId: parsedBody.nicheTrackId ?? null,
                 content: parsedBody.content,
             })
 
@@ -438,6 +438,10 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "POST_NOT_FOUND", "Post not found", 404)
         }
 
+        if (existingPost.deleted_at) {
+            return sendError(res, "POST_NOT_FOUND", "Post not found", 404)
+        }
+
         if (existingPost.owner_id !== req.userId) {
             return sendError(res, "FORBIDDEN", "You do not own this post", 403)
         }
@@ -453,14 +457,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
                 .from("posts")
                 .update(prepared.row)
                 .eq("id", id)
-                .select(`
-              *,
-              owner:profiles!posts_owner_id_fkey (
-                id,
-                username,
-                avatar_url
-              )
-            `)
+                .select(POST_LIST_SELECT)
                 .single()
 
             if (updateError) {
@@ -488,15 +485,19 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
     app.post("/posts/:id/delete", { preHandler: [app.authenticate] }, async (req, res) => {
         const { id } = req.params as { id: string }
 
-        const { data: post, error: postError } = await supabase.schema("public").from("posts").select("id, owner_id").eq("id", id).maybeSingle()
+        const { data: post, error: postError } = await supabase.schema("public").from("posts").select("id, owner_id, deleted_at").eq("id", id).maybeSingle()
 
         if (postError) { return sendError(res, "POST_FETCH_FAILED", postError.message, 500) }
 
-        if (!post) { return sendError(res, "POST_NOT_FOUND", "Post not found", 404) }
+        if (!post || post.deleted_at) { return sendError(res, "POST_NOT_FOUND", "Post not found", 404) }
 
         if (post.owner_id !== req.userId) { return sendError(res, "FORBIDDEN", "You do not own this post", 403) }
 
-        const { error: deleteError } = await supabase.schema("public").from("posts").delete().eq("id", id)
+        const { error: deleteError } = await supabase
+            .schema("public")
+            .from("posts")
+            .update({ deleted_at: new Date().toISOString() })
+            .eq("id", id)
 
         if (deleteError) { return sendError(res, "POST_DELETE_FAILED", deleteError.message, 500) }
 
@@ -560,7 +561,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
-    app.get("/posts/:id/comments/:commentId/replies", { preHandler: app.optionalAuthenticate }, async (req, res) => {
+    app.get("/posts/:postId/comments/:commentId/replies", { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { postId, commentId } = req.params as { postId: string; commentId: string }
         const { cursor, limit } = listCommentsQuerySchema.parse(req.query)
         const decoded = decodeCommentCursor(cursor)
@@ -773,7 +774,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             })),
         }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorUserId: last.liker_id }) : null,
+                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: toUtcZulu(last.created_at), cursorUserId: last.liker_id }) : null,
                 limit,
                 hasMore,
             },
@@ -846,8 +847,9 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         let query = supabase
             .schema("public")
             .from("posts")
-            .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
+            .select(POST_LIST_SELECT)
             .eq("owner_id", req.userId)
+            .is("deleted_at", null)
             .order("created_at", { ascending: false })
             .order("id", { ascending: false })
             .limit(limit + 1)
@@ -864,7 +866,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
 
         return sendSuccess(res, { posts }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                nextCursor: hasMore && last ? encodePostListCursor(last.created_at, last.id) : null,
                 limit,
                 hasMore,
             },
@@ -882,8 +884,9 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
         let query = supabase
             .schema("public")
             .from("posts")
-            .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name)")
+            .select(POST_LIST_SELECT)
             .eq("owner_id", otherUser.id)
+            .is("deleted_at", null)
             .order("created_at", { ascending: false })
             .order("id", { ascending: false })
             .limit(limit + 1)
@@ -906,7 +909,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             })),
         }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                nextCursor: hasMore && last ? encodePostListCursor(last.created_at, last.id) : null,
                 limit,
                 hasMore,
             },
@@ -930,13 +933,18 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
 
         let query = supabase
             .schema("public")
-            .from("post_reposts") // reposter_id, post_id, created_at; no id
+            .from("post_reposts")
             .select("*, post:posts(*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name))")
             .eq("reposter_id", req.userId)
             .order("created_at", { ascending: false })
+            .order("post_id", { ascending: false })
             .limit(limit + 1)
-            
-        if (cursorCreatedAt && cursorId) query = query.or(`created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lt.${cursorId})`)
+
+        if (cursorCreatedAt && cursorId) {
+            query = query.or(
+                `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},post_id.lt.${cursorId})`
+            )
+        }
 
         const { data, error } = await query
         if (error) return sendError(res, "POSTS_FETCH_FAILED", error.message, 500)
@@ -957,7 +965,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             })),
         }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                nextCursor: hasMore && last ? encodePostListCursor(last.created_at, last.post_id) : null,
                 limit,
                 hasMore,
             },
@@ -978,9 +986,14 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             .select("*, post:posts(*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name))")
             .eq("reposter_id", otherUser.id)
             .order("created_at", { ascending: false })
+            .order("post_id", { ascending: false })
             .limit(limit + 1)
-            
-        if (cursorCreatedAt && cursorId) query = query.or(`created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lt.${cursorId})`)
+
+        if (cursorCreatedAt && cursorId) {
+            query = query.or(
+                `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},post_id.lt.${cursorId})`
+            )
+        }
 
         const { data, error } = await query
         if (error) return sendError(res, "POSTS_FETCH_FAILED", error.message, 500)
@@ -998,7 +1011,7 @@ const postsRoutes: FastifyPluginAsync = async (app) => {
             })),
         }, {
             pagination: {
-                nextCursor: hasMore && last ? JSON.stringify({ cursorCreatedAt: last.created_at, cursorId: last.id }) : null,
+                nextCursor: hasMore && last ? encodePostListCursor(last.created_at, last.post_id) : null,
                 limit,
                 hasMore,
             },

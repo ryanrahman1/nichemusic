@@ -1,23 +1,71 @@
 import { FastifyPluginAsync } from "fastify"
-import { SignupEmailSchema, signupEmailSchema, loginEmailSchema, LoginEmailSchema, googleCallbackQuerySchema, SignupOAuthSchema, signupOAuthSchema, exchangeSessionSchema } from "./schemas.js"
-import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, generateOAuthState, buildGoogleAuthUrl, handleGoogleCallback, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME, signupWithOAuth } from "../../lib/auth.js"
+import { ZodError, z } from "zod"
+import { SignupEmailSchema, signupEmailSchema, loginEmailSchema, LoginEmailSchema, googleCallbackQuerySchema, SignupOAuthSchema, signupOAuthSchema, exchangeSessionSchema, usernameAvailabilityQuerySchema, passwordResetSendSchema, passwordResetConfirmSchema } from "./schemas.js"
+import { signupWithEmail, loginWithEmail, revokeSession, revokeAllUserSessions, generateOAuthState, buildGoogleAuthUrl, handleGoogleCallback, SESSION_COOKIE_NAME, OAUTH_STATE_COOKIE_NAME, signupWithOAuth, checkUsernameAvailability, SignupConflictError, generateRandomId, createPasswordResetToken, resetPasswordWithToken, PasswordResetSamePasswordError } from "../../lib/auth.js"
 import { getAvatarPresignedUrl } from "../../lib/image.js"
 import { supabase } from "../../config/supabase.js"
 import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
+import { sendEmailVerificationCode, sendResetPasswordEmail } from "../../lib/email.js"
+import crypto from "crypto"
 
+
+const emailVerifyConfirmSchema = z.object({
+    code: z.string().regex(/^\d{6}$/),
+})
+
+
+function generateSixDigitCode() {
+    return crypto.randomInt(100000, 1000000).toString()
+}
+
+function hashEmailCode(code: string) {
+    const pepper = env.emailCodePepper
+    return crypto.createHash("sha256").update(`${code}.${pepper}`).digest("hex")
+}
 
 // signup flow: post to signup -> client gets url, uploads the image -> on success, client makes patch request to /auth/me/avatar with the object key and avatar url
 
 const authRoutes: FastifyPluginAsync = async (app) => {
-    app.post("/signup/email", async (req, res) => {
+    app.get("/signup/username/available", async (req, res) => {
+        const parsedQuery = usernameAvailabilityQuerySchema.parse(req.query)
+        const result = await checkUsernameAvailability(parsedQuery.username)
+        return sendSuccess(res, result)
+    })
 
-        const parsedBody: SignupEmailSchema = signupEmailSchema.parse(req.body)
+    app.post("/signup/email", async (req, res) => {
+        let parsedBody: SignupEmailSchema
+        try {
+            parsedBody = signupEmailSchema.parse(req.body)
+        } catch (error) {
+            if (error instanceof ZodError) {
+                const message = error.issues[0]?.message ?? "Invalid signup request"
+                return sendError(res, "VALIDATION_ERROR", message, 400)
+            }
+            throw error
+        }
+
         const ipAddress = req.ip
         const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
 
-
-        const result = await signupWithEmail({ ...parsedBody }, { ipAddress, userAgent })
+        let result: Awaited<ReturnType<typeof signupWithEmail>>
+        try {
+            result = await signupWithEmail(
+                {
+                    email: parsedBody.email,
+                    password: parsedBody.password,
+                    username: parsedBody.username,
+                    profileType: parsedBody.profileType,
+                },
+                { ipAddress, userAgent }
+            )
+        } catch (error) {
+            if (error instanceof SignupConflictError) {
+                return sendError(res, error.code, error.message, 409)
+            }
+            const message = error instanceof Error && error.message ? error.message : "Signup failed"
+            return sendError(res, "SIGNUP_FAILED", message, 400)
+        }
 
         // get avatar presigned url, if chose avatar is true
         let avatarUrl: string | undefined = undefined
@@ -42,24 +90,22 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             maxAge: 60 * 60 * 24 * 365
         })
 
-        return res.status(200).send({
-            success: true,
-            result: {
-                user: {
-                    id: result.userId,
-                },
-                avatarUpload: parsedBody.choseAvatar ? {
-                    uploadUrl: uploadUrl,
-                    avatarUrl: avatarUrl,
-                    objectKey: objectKey,
-                    contentType: contentType,
-                    maxBytes: maxBytes,
-                } : null,
-            }
+        return sendSuccess(res, {
+            user: {
+                id: result.userId,
+                avatarUrl: avatarUrl ?? null,
+            },
+            avatarUpload: parsedBody.choseAvatar ? {
+                uploadUrl: uploadUrl,
+                avatarUrl: avatarUrl,
+                objectKey: objectKey,
+                contentType: contentType,
+                maxBytes: maxBytes,
+            } : null,
         })
     })
 
-    app.patch("/auth/me/avatar", { preHandler: [app.authenticate] }, async (req, res) => {
+    app.patch("/auth/me/avatar", { preHandler: [app.preAuthenticate] }, async (req, res) => {
         const { objectKey, avatarUrl } = req.body as { objectKey: string, avatarUrl: string }
 
         if (!objectKey.startsWith(`${req.userId}/avatar-`)) {
@@ -109,9 +155,262 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, {
             user: {
                 id: result.userId,
+                avatarUrl: result.avatarUrl
             },
         })
     })
+
+    // email stuff
+
+    app.post("/email/verify/send", { preHandler: app.preAuthenticate }, async (req, res) => {
+        const userId = req.userId
+
+        const { data: user, error: userError } = await supabase
+            .schema("authn")
+            .from("users")
+            .select("id, email, email_verified_at")
+            .eq("id", userId)
+            .maybeSingle()
+
+        if (userError) {
+            return sendError(res, "EMAIL_VERIFY_SEND_FAILED", userError.message, 500)
+        }
+
+        if (!user) {
+            return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+        }
+
+        if (user.email_verified_at) {
+            return sendSuccess(res, { alreadyVerified: true })
+        }
+
+        const now = new Date()
+        const cooldownSeconds = 45
+        const expiresInMinutes = 10
+
+        const { data: activeCode, error: activeCodeError } = await supabase
+            .schema("authn")
+            .from("email_verifications")
+            .select("id, last_sent_at, expires_at, attempts")
+            .eq("user_id", user.id)
+            .eq("email", user.email)
+            .is("consumed_at", null)
+            .gt("expires_at", now.toISOString())
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (activeCodeError) {
+            return sendError(res, "EMAIL_VERIFY_SEND_FAILED", activeCodeError.message, 500)
+        }
+
+        if (activeCode?.last_sent_at) {
+            const lastSentAt = new Date(activeCode.last_sent_at).getTime()
+            const secondsSinceLastSend = (Date.now() - lastSentAt) / 1000
+
+            if (secondsSinceLastSend < cooldownSeconds) {
+                return sendError(
+                    res,
+                    "EMAIL_VERIFY_COOLDOWN",
+                    `Please wait ${Math.ceil(cooldownSeconds - secondsSinceLastSend)} seconds before requesting another code.`,
+                    429
+                )
+            }
+        }
+
+        // Only one active code per user/email.
+        await supabase
+            .schema("authn")
+            .from("email_verifications")
+            .update({ consumed_at: now.toISOString() })
+            .eq("user_id", user.id)
+            .eq("email", user.email)
+            .is("consumed_at", null)
+
+        const code = generateSixDigitCode()
+        const tokenHash = hashEmailCode(code)
+        const verificationId = generateRandomId(16)
+        const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString()
+
+        const { error: insertError } = await supabase
+            .schema("authn")
+            .from("email_verifications")
+            .insert({
+                id: verificationId,
+                user_id: user.id,
+                email: user.email,
+                token_hash: tokenHash,
+                expires_at: expiresAt,
+                last_sent_at: now.toISOString(),
+            })
+
+        if (insertError) {
+            return sendError(res, "EMAIL_VERIFY_SEND_FAILED", insertError.message, 500)
+        }
+
+        await sendEmailVerificationCode({
+            email: user.email,
+            code,
+            expiresInMinutes        
+        })
+
+        return sendSuccess(res, {
+            sent: true,
+            expiresAt,
+            cooldownSeconds,
+        })
+    })
+
+    app.post("/email/verify/confirm", { preHandler: app.preAuthenticate }, async (req, res) => {
+        const userId = req.userId
+        const { code } = emailVerifyConfirmSchema.parse(req.body)
+
+        const codeHash = hashEmailCode(code)
+        const now = new Date().toISOString()
+        const maxAttempts = 5
+
+        const { data: user, error: userError } = await supabase
+            .schema("authn")
+            .from("users")
+            .select("id, email, email_verified_at")
+            .eq("id", userId)
+            .maybeSingle()
+
+        if (userError) {
+            return sendError(res, "EMAIL_VERIFY_CONFIRM_FAILED", userError.message, 500)
+        }
+
+        if (!user) {
+            return sendError(res, "USER_NOT_FOUND", "User not found", 404)
+        }
+
+        if (user.email_verified_at) {
+            return sendSuccess(res, { verified: true, alreadyVerified: true })
+        }
+
+        const { data: verification, error: verificationError } = await supabase
+            .schema("authn")
+            .from("email_verifications")
+            .select("id, token_hash, attempts, expires_at")
+            .eq("user_id", user.id)
+            .eq("email", user.email)
+            .is("consumed_at", null)
+            .gt("expires_at", now)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .maybeSingle()
+
+        if (verificationError) {
+            return sendError(res, "EMAIL_VERIFY_CONFIRM_FAILED", verificationError.message, 500)
+        }
+
+        if (!verification) {
+            return sendError(res, "EMAIL_VERIFY_CODE_EXPIRED", "Code expired or not found.", 400)
+        }
+
+        if (verification.attempts >= maxAttempts) {
+            await supabase
+                .schema("authn")
+                .from("email_verifications")
+                .update({ consumed_at: now })
+                .eq("id", verification.id)
+
+            return sendError(res, "EMAIL_VERIFY_TOO_MANY_ATTEMPTS", "Too many attempts. Please request a new code.", 429)
+        }
+
+        if (verification.token_hash !== codeHash) {
+            const nextAttempts = verification.attempts + 1
+
+            await supabase
+                .schema("authn")
+                .from("email_verifications")
+                .update({
+                    attempts: nextAttempts,
+                    consumed_at: nextAttempts >= maxAttempts ? now : null,
+                })
+                .eq("id", verification.id)
+
+            return sendError(res, "EMAIL_VERIFY_INVALID_CODE", "Invalid code.", 400)
+        }
+
+        const [{ error: userUpdateError }, { error: verificationUpdateError }] = await Promise.all([
+            supabase
+                .schema("authn")
+                .from("users")
+                .update({ email_verified_at: now, email_verified: true })
+                .eq("id", user.id),
+
+            supabase
+                .schema("authn")
+                .from("email_verifications")
+                .update({ consumed_at: now })
+                .eq("id", verification.id),
+        ])
+
+        if (userUpdateError) {
+            return sendError(res, "EMAIL_VERIFY_CONFIRM_FAILED", userUpdateError.message, 500)
+        }
+
+        if (verificationUpdateError) {
+            return sendError(res, "EMAIL_VERIFY_CONFIRM_FAILED", verificationUpdateError.message, 500)
+        }
+
+        return sendSuccess(res, {
+            verified: true,
+        })
+    })
+
+
+    app.post("/password/reset/send", async (req, res) => {
+        const { email } = passwordResetSendSchema.parse(req.body)
+        const expiresInMinutes = 30
+
+        try {
+            const rawToken = await createPasswordResetToken(email)
+
+            if (rawToken) {
+                const link = `${env.passwordResetBaseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`
+                await sendResetPasswordEmail({
+                    email,
+                    link,
+                    expiresInMinutes,
+                })
+            }
+        } catch (error) {
+            req.log.error({ err: error }, "password reset send failed")
+        }
+
+        return sendSuccess(res, { sent: true })
+    })
+
+    app.post("/password/reset/confirm", async (req, res) => {
+        const { token, password } = passwordResetConfirmSchema.parse(req.body)
+
+        try {
+            await resetPasswordWithToken(token, password)
+        } catch (error) {
+            if (error instanceof PasswordResetSamePasswordError) {
+                return sendError(res, error.code, error.message, 400)
+            }
+
+            const message =
+                error instanceof Error && error.message
+                    ? error.message
+                    : "Invalid or expired reset token"
+
+            if (message.includes("Password must")) {
+                return sendError(res, "VALIDATION_ERROR", message, 400)
+            }
+
+            return sendError(res, "PASSWORD_RESET_INVALID_TOKEN", message, 400)
+        }
+
+        return sendSuccess(res, { reset: true })
+    })
+
+
+
+
 
     // oauth
     // get google auth url, set state cookie; supports both JSON and browser redirect
@@ -297,7 +596,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return sendSuccess(res, { ok: true })
     })
 
-    app.post("/logout", { preHandler: [app.authenticate] }, async (req, res) => {
+    app.post("/logout", { preHandler: [app.preAuthenticate] }, async (req, res) => {
         const token = req.cookies.session
         if (!token) {
             return res.status(401).send({ error: "Unauthorized" })
@@ -352,12 +651,27 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         return res.status(200).send({ success: true })
     })
 
-    app.get("/session", { preHandler: app.authenticate }, async (req, res) => { // quick check if session is valid; if so return true
+    app.get("/session", { preHandler: app.preAuthenticate }, async (req, res) => { // quick check if session is valid; if so return true
 
+        const { data: user, error: userError } = await supabase
+            .schema("authn")
+            .from("users")
+            .select("id, avatar_url, email, email_verified")
+            .eq("id", req.userId)
+            .single()
 
-        return sendSuccess(res, { user: { id: req.userId } })
+        if (userError) { return sendError(res, "USER_NOT_FOUND", userError.message, 404) }
 
-    }) 
+        return sendSuccess(res, {
+            user: {
+                id: req.userId,
+                avatarUrl: user.avatar_url,
+                email: user.email,
+            },
+            emailVerified: user.email_verified,
+        })
+
+    })
 
 
     // for apple: delete account

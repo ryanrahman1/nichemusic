@@ -2,7 +2,13 @@ import type { FastifyPluginAsync } from "fastify"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { logImpression, logProfileOpen, logSkip, logView } from "../../lib/feed.js"
 import { getHomeFeed } from "./service.js"
-import { feedImpressionSchema, feedOpenProfileSchema, feedQuerySchema, feedSkipSchema, feedViewSchema } from "./schemas.js"
+import {
+    feedImpressionSchema,
+    feedOpenProfileSchema,
+    feedQuerySchema,
+    feedSkipSchema,
+    feedViewSchema,
+} from "./schemas.js"
 
 const feedRoutes: FastifyPluginAsync = async (app) => {
     app.get("/feed/home", { preHandler: app.optionalAuthenticate }, async (req, res) => {
@@ -15,17 +21,26 @@ const feedRoutes: FastifyPluginAsync = async (app) => {
                 cursor,
             })
 
-            return sendSuccess(res, {
-                items: result.items,
-            }, {
-                pagination: {
-                    nextCursor: result.nextCursor,
-                    limit,
-                    hasMore: result.hasMore,
+            return sendSuccess(
+                res,
+                {
+                    items: result.items,
                 },
-            })
+                {
+                    pagination: {
+                        nextCursor: result.nextCursor,
+                        limit,
+                        hasMore: result.hasMore,
+                    },
+                }
+            )
         } catch (error) {
-            return sendError(res, "FEED_HOME_FETCH_FAILED", error instanceof Error ? error.message : "Failed to fetch home feed", 500)
+            return sendError(
+                res,
+                "FEED_HOME_FETCH_FAILED",
+                error instanceof Error ? error.message : "Failed to fetch home feed",
+                500
+            )
         }
     })
 
@@ -41,7 +56,12 @@ const feedRoutes: FastifyPluginAsync = async (app) => {
 
             return sendSuccess(res, { logged: true })
         } catch (error) {
-            return sendError(res, "FEED_IMPRESSION_LOG_FAILED", error instanceof Error ? error.message : "Failed to log impression", 500)
+            return sendError(
+                res,
+                "FEED_IMPRESSION_LOG_FAILED",
+                error instanceof Error ? error.message : "Failed to log impression",
+                500
+            )
         }
     })
 
@@ -58,7 +78,12 @@ const feedRoutes: FastifyPluginAsync = async (app) => {
 
             return sendSuccess(res, { logged: true })
         } catch (error) {
-            return sendError(res, "FEED_VIEW_LOG_FAILED", error instanceof Error ? error.message : "Failed to log view", 500)
+            return sendError(
+                res,
+                "FEED_VIEW_LOG_FAILED",
+                error instanceof Error ? error.message : "Failed to log view",
+                500
+            )
         }
     })
 
@@ -75,7 +100,12 @@ const feedRoutes: FastifyPluginAsync = async (app) => {
 
             return sendSuccess(res, { logged: true })
         } catch (error) {
-            return sendError(res, "FEED_SKIP_LOG_FAILED", error instanceof Error ? error.message : "Failed to log skip", 500)
+            return sendError(
+                res,
+                "FEED_SKIP_LOG_FAILED",
+                error instanceof Error ? error.message : "Failed to log skip",
+                500
+            )
         }
     })
 
@@ -90,7 +120,12 @@ const feedRoutes: FastifyPluginAsync = async (app) => {
 
             return sendSuccess(res, { logged: true })
         } catch (error) {
-            return sendError(res, "FEED_PROFILE_OPEN_LOG_FAILED", error instanceof Error ? error.message : "Failed to log profile open", 500)
+            return sendError(
+                res,
+                "FEED_PROFILE_OPEN_LOG_FAILED",
+                error instanceof Error ? error.message : "Failed to log profile open",
+                500
+            )
         }
     })
 }

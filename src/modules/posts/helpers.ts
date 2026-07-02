@@ -16,18 +16,64 @@ type TrackSnapshot = {
     release_date: string | null
 }
 
+type NicheTrackSnapshot = {
+    id: string
+    name: string | null
+    artwork_url: string | null
+    music_url: string | null
+    moment_url: string | null
+    duration_ms: number | null
+    explicit: boolean
+    release_date: string | null
+    owner_id: string | null
+    owner_username: string | null
+}
+
 type ExistingPostRow = {
     id: string
     owner_id: string | null
     group_id: string | null
     kind: "text" | "image" | "video" | "track" | "pmo" | "poll"
     track_id: string | null
+    niche_track_id: string | null
     visibility: "public" | "private" | "group"
     content: any
     has_media: boolean
     has_track: boolean
     has_sound: boolean
 }
+
+export const POST_TRACK_JOIN = `
+track:tracks!posts_track_id_fkey(
+    id,
+    source,
+    source_id,
+    name,
+    artwork_url,
+    preview_url,
+    artist:artists!tracks_artist_id_fkey(id, name)
+)`
+
+export const POST_NICHE_TRACK_JOIN = `
+niche_track:niche_tracks!posts_niche_track_id_fkey(
+    id,
+    name,
+    artwork_url,
+    music_url,
+    moment_url,
+    duration_ms,
+    explicit,
+    release_date,
+    owner:profiles!niche_tracks_owner_id_fkey(id, username, avatar_url)
+)`
+
+export const POST_LIST_SELECT = `
+*,
+owner:profiles!posts_owner_id_fkey(id, username, avatar_url),
+group:groups!posts_group_id_fkey(id, name),
+${POST_TRACK_JOIN},
+${POST_NICHE_TRACK_JOIN}
+`
 
 function buildPostMediaUrl(objectKey: string): string {
     return `${env.r2.publicBaseUrl}/media/posts/${objectKey}`
@@ -81,13 +127,111 @@ async function fetchTrackSnapshot(trackId: string): Promise<TrackSnapshot> {
     }
 }
 
+async function fetchNicheTrackSnapshot(nicheTrackId: string): Promise<NicheTrackSnapshot> {
+    const { data: track, error: trackError } = await supabase
+        .schema("public")
+        .from("niche_tracks")
+        .select("id, name, artwork_url, music_url, moment_url, duration_ms, explicit, release_date, owner_id, deleted_at, owner:profiles!niche_tracks_owner_id_fkey(username)")
+        .eq("id", nicheTrackId)
+        .maybeSingle()
+
+    if (trackError || !track || track.deleted_at) {
+        throw new Error("Niche track not found")
+    }
+
+    const owner = track.owner as { username?: string | null } | null
+
+    return {
+        id: track.id,
+        name: track.name ?? null,
+        artwork_url: track.artwork_url ?? null,
+        music_url: track.music_url ?? null,
+        moment_url: track.moment_url ?? null,
+        duration_ms: track.duration_ms ?? null,
+        explicit: track.explicit ?? false,
+        release_date: track.release_date ?? null,
+        owner_id: track.owner_id ?? null,
+        owner_username: owner?.username ?? null,
+    }
+}
+
+function buildCatalogTrackContent(trackSnapshot: TrackSnapshot) {
+    return {
+        id: trackSnapshot.id,
+        source: trackSnapshot.source,
+        source_id: trackSnapshot.source_id,
+        title: trackSnapshot.name,
+        artist_id: trackSnapshot.artist_id,
+        artist_name: trackSnapshot.artist_name,
+        album_id: trackSnapshot.album_id,
+        artwork_url: trackSnapshot.artwork_url,
+        preview_url: trackSnapshot.preview_url,
+        release_date: trackSnapshot.release_date,
+    }
+}
+
+function buildNicheTrackContent(trackSnapshot: NicheTrackSnapshot) {
+    return {
+        id: trackSnapshot.id,
+        title: trackSnapshot.name,
+        artwork_url: trackSnapshot.artwork_url,
+        music_url: trackSnapshot.music_url,
+        moment_url: trackSnapshot.moment_url,
+        duration_ms: trackSnapshot.duration_ms,
+        explicit: trackSnapshot.explicit,
+        release_date: trackSnapshot.release_date,
+        owner_id: trackSnapshot.owner_id,
+        owner_username: trackSnapshot.owner_username,
+    }
+}
+
+const NICHE_TRACK_KINDS = new Set(["image", "video", "pmo", "track"])
+const CATALOG_TRACK_KINDS = new Set(["pmo"])
+
+function validatePostTrackAttachment(params: {
+    kind: CreatePostSchema["kind"]
+    trackId: string | null
+    nicheTrackId: string | null
+}) {
+    const { kind, trackId, nicheTrackId } = params
+
+    if (trackId && nicheTrackId) {
+        throw new Error("Cannot attach both a catalog track and a niche track")
+    }
+
+    if (trackId && !CATALOG_TRACK_KINDS.has(kind)) {
+        throw new Error("Catalog tracks can only be attached to PMO posts")
+    }
+
+    if (nicheTrackId && !NICHE_TRACK_KINDS.has(kind)) {
+        throw new Error("Niche tracks cannot be attached to this post kind")
+    }
+
+    if (kind === "text" || kind === "poll") {
+        if (trackId || nicheTrackId) {
+            throw new Error(`${kind} posts cannot include a track`)
+        }
+    }
+
+    if (kind === "track" && !nicheTrackId) {
+        throw new Error("Track posts must include a niche track")
+    }
+
+    if (kind === "pmo" && !trackId && !nicheTrackId) {
+        throw new Error("PMO posts must include a track")
+    }
+}
+
 // validation
 function validatePostContentByKind(params: {
     kind: CreatePostSchema["kind"]
     content: CreatePostContentInputSchema
     trackId: string | null
+    nicheTrackId: string | null
 }) {
-    const { kind, content, trackId } = params
+    const { kind, content, trackId, nicheTrackId } = params
+
+    validatePostTrackAttachment({ kind, trackId, nicheTrackId })
 
     if (content.kind !== kind) {
         throw new Error("content.kind must match top-level kind")
@@ -97,9 +241,6 @@ function validatePostContentByKind(params: {
         case "text": {
             if (content.media.length > 0) {
                 throw new Error("Text posts cannot include media")
-            }
-            if (trackId) {
-                throw new Error("Text posts cannot include a track")
             }
             if (content.template) {
                 throw new Error("Text posts cannot include a template")
@@ -128,9 +269,6 @@ function validatePostContentByKind(params: {
         }
 
         case "track": {
-            if (!trackId) {
-                throw new Error("Track posts must include a track")
-            }
             if (content.media.length > 0) {
                 throw new Error("Track posts cannot include media")
             }
@@ -138,9 +276,6 @@ function validatePostContentByKind(params: {
         }
 
         case "pmo": {
-            if (!trackId) {
-                throw new Error("PMO posts must include a track")
-            }
             if (!content.template || content.template.name !== "pmo") {
                 throw new Error("PMO posts must include a PMO template")
             }
@@ -166,14 +301,17 @@ export async function cleanPostForInsert(params: {
     kind: CreatePostSchema["kind"]
     visibility: CreatePostSchema["visibility"]
     trackId?: string | null
+    nicheTrackId?: string | null
     content: CreatePostContentInputSchema
 }) {
     const trackId = params.trackId ?? null
+    const nicheTrackId = params.nicheTrackId ?? null
 
     validatePostContentByKind({
         kind: params.kind,
         content: params.content,
         trackId,
+        nicheTrackId,
     })
 
     const cleanedMedia = params.content.media.map((item) => {
@@ -189,10 +327,13 @@ export async function cleanPostForInsert(params: {
         }
     })
 
-    const trackSnapshot = trackId ? await fetchTrackSnapshot(trackId) : null
+    const [trackSnapshot, nicheTrackSnapshot] = await Promise.all([
+        trackId ? fetchTrackSnapshot(trackId) : Promise.resolve(null),
+        nicheTrackId ? fetchNicheTrackSnapshot(nicheTrackId) : Promise.resolve(null),
+    ])
 
     const hasMedia = cleanedMedia.length > 0
-    const hasTrack = !!trackSnapshot
+    const hasTrack = !!trackSnapshot || !!nicheTrackSnapshot
 
     // v1: original sound exists only when there is video media.
     // We are not separately storing extracted audio yet.
@@ -211,20 +352,8 @@ export async function cleanPostForInsert(params: {
         kind: params.kind,
         caption: params.content.caption.trim(),
         media: cleanedMedia,
-        track: trackSnapshot
-            ? {
-                id: trackSnapshot.id,
-                source: trackSnapshot.source,
-                source_id: trackSnapshot.source_id,
-                title: trackSnapshot.name,
-                artist_id: trackSnapshot.artist_id,
-                artist_name: trackSnapshot.artist_name,
-                album_id: trackSnapshot.album_id,
-                artwork_url: trackSnapshot.artwork_url,
-                preview_url: trackSnapshot.preview_url,
-                release_date: trackSnapshot.release_date,
-            }
-            : null,
+        track: trackSnapshot ? buildCatalogTrackContent(trackSnapshot) : null,
+        niche_track: nicheTrackSnapshot ? buildNicheTrackContent(nicheTrackSnapshot) : null,
         original_sound: originalSound,
         template: params.content.template ?? null,
         metadata: params.content.metadata ?? {},
@@ -243,6 +372,7 @@ export async function cleanPostForInsert(params: {
             group_id: params.groupId ?? null,
             kind: params.kind,
             track_id: trackId,
+            niche_track_id: nicheTrackId,
             visibility: params.visibility,
             content: cleanedContent,
             has_media: hasMedia,
@@ -257,8 +387,11 @@ function validateUpdatedPostContentByKind(params: {
     kind: ExistingPostRow["kind"]
     content: any
     trackId: string | null
+    nicheTrackId: string | null
 }) {
-    const { kind, content, trackId } = params
+    const { kind, content, trackId, nicheTrackId } = params
+
+    validatePostTrackAttachment({ kind, trackId, nicheTrackId })
 
     if (content.kind !== kind) {
         throw new Error("Post kind cannot be changed")
@@ -268,9 +401,6 @@ function validateUpdatedPostContentByKind(params: {
         case "text": {
             if (content.media?.length > 0) {
                 throw new Error("Text posts cannot include media")
-            }
-            if (trackId) {
-                throw new Error("Text posts cannot include a track")
             }
             break
         }
@@ -290,9 +420,6 @@ function validateUpdatedPostContentByKind(params: {
         }
 
         case "track": {
-            if (!trackId) {
-                throw new Error("Track posts must include a track")
-            }
             if (content.media?.length > 0) {
                 throw new Error("Track posts cannot include media")
             }
@@ -300,9 +427,6 @@ function validateUpdatedPostContentByKind(params: {
         }
 
         case "pmo": {
-            if (!trackId) {
-                throw new Error("PMO posts must include a track")
-            }
             if (!content.template || content.template.name !== "pmo") {
                 throw new Error("PMO posts must include a PMO template")
             }
@@ -328,8 +452,23 @@ export async function cleanPostForUpdate(params: {
     const { existingPost, updates } = params
 
     const nextVisibility = updates.visibility ?? existingPost.visibility
-    const nextTrackId =
-        updates.trackId !== undefined ? updates.trackId : existingPost.track_id
+
+    let nextTrackId = existingPost.track_id
+    let nextNicheTrackId = existingPost.niche_track_id
+
+    if (updates.trackId !== undefined) {
+        nextTrackId = updates.trackId
+        if (updates.trackId) nextNicheTrackId = null
+    }
+
+    if (updates.nicheTrackId !== undefined) {
+        nextNicheTrackId = updates.nicheTrackId
+        if (updates.nicheTrackId) nextTrackId = null
+    }
+
+    if (nextTrackId && nextNicheTrackId) {
+        throw new Error("Cannot attach both a catalog track and a niche track")
+    }
 
     const baseContent = existingPost.content ?? {}
 
@@ -353,25 +492,16 @@ export async function cleanPostForUpdate(params: {
                 : (baseContent.metadata ?? {}),
     }
 
-    const trackSnapshot = nextTrackId ? await fetchTrackSnapshot(nextTrackId) : null
+    const [trackSnapshot, nicheTrackSnapshot] = await Promise.all([
+        nextTrackId ? fetchTrackSnapshot(nextTrackId) : Promise.resolve(null),
+        nextNicheTrackId ? fetchNicheTrackSnapshot(nextNicheTrackId) : Promise.resolve(null),
+    ])
 
-    nextContent.track = trackSnapshot
-        ? {
-            id: trackSnapshot.id,
-            source: trackSnapshot.source,
-            source_id: trackSnapshot.source_id,
-            title: trackSnapshot.name,
-            artist_id: trackSnapshot.artist_id,
-            artist_name: trackSnapshot.artist_name,
-            album_id: trackSnapshot.album_id,
-            artwork_url: trackSnapshot.artwork_url,
-            preview_url: trackSnapshot.preview_url,
-            release_date: trackSnapshot.release_date,
-        }
-        : null
+    nextContent.track = trackSnapshot ? buildCatalogTrackContent(trackSnapshot) : null
+    nextContent.niche_track = nicheTrackSnapshot ? buildNicheTrackContent(nicheTrackSnapshot) : null
 
     const hasMedia = Array.isArray(nextContent.media) && nextContent.media.length > 0
-    const hasTrack = !!trackSnapshot
+    const hasTrack = !!trackSnapshot || !!nicheTrackSnapshot
     const hasSound = !!nextContent.original_sound
 
     nextContent.analytics = {
@@ -386,12 +516,14 @@ export async function cleanPostForUpdate(params: {
         kind: existingPost.kind,
         content: nextContent,
         trackId: nextTrackId,
+        nicheTrackId: nextNicheTrackId,
     })
 
     return {
         row: {
             visibility: nextVisibility,
             track_id: nextTrackId,
+            niche_track_id: nextNicheTrackId,
             content: nextContent,
             has_track: hasTrack,
             updated_at: new Date().toISOString(),
