@@ -1,6 +1,7 @@
 import { supabase } from "../../config/supabase.js"
 import { trackSchema, type Track, albumSchema, type Album, artistSchema, type Artist } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
+import { normalizePublicAssetUrl } from "../../lib/image.js"
 import env from "../../config/env.js"
 
 const MUSIC_BASE_URL = "https://api.music.apple.com/v1/catalog/us"
@@ -12,6 +13,8 @@ function resolveAppleCatalogNext(next: unknown): string | null {
     if (next.startsWith("/v1/")) return `${APPLE_API_ORIGIN}${next}`
     return null
 }
+
+
 
 /** Fetches catalog track pages for an album and upserts rows (links `album_id` / `artist_id`). */
 export async function syncAppleAlbumTracks(albumCatalogSourceId: string): Promise<boolean> {
@@ -263,6 +266,20 @@ export async function getTrackViewerContext(userId: string | undefined, trackId:
     }
 }
 
+export async function getNicheTrackViewerContext(userId: string | undefined, trackId: string) {
+    if (!userId) return { isLiked: false, isSaved: false }
+
+    const [{ data: liked }, { data: saved }] = await Promise.all([
+        supabase.schema("public").from("niche_track_likes").select("track_id").eq("liker_id", userId).eq("track_id", trackId).maybeSingle(),
+        supabase.schema("public").from("niche_track_saves").select("track_id").eq("saver_id", userId).eq("track_id", trackId).maybeSingle(),
+    ])
+
+    return {
+        isLiked: !!liked,
+        isSaved: !!saved,
+    }
+}
+
 export async function getAlbumViewerContext(userId: string | undefined, albumId: string) {
     if (!userId) return { isLiked: false, isSaved: false }
 
@@ -323,4 +340,229 @@ export async function getArtistViewerContextMap(userId: string, artists: { id: s
     const fanSet = new Set((data ?? []).map((row) => row.artist_id))
 
     return new Map(artists.map((artist) => [artist.id, { isFan: fanSet.has(artist.id), isOwner: artist.owner_id === userId }]))
+}
+
+export async function attachArtistNamesToTracks<
+    T extends { artist_id?: string | null }
+>(tracks: T[]): Promise<(T & { artist_name: string | null })[]> {
+    const artistIds = [
+        ...new Set(
+            tracks
+                .map((track) => track.artist_id)
+                .filter((id): id is string => typeof id === "string" && id.length > 0)
+        ),
+    ]
+
+    if (!artistIds.length) {
+        return tracks.map((track) => ({ ...track, artist_name: null }))
+    }
+
+    const { data, error } = await supabase
+        .schema("public")
+        .from("artists")
+        .select("id, name")
+        .in("id", artistIds)
+
+    if (error) throw new Error(error.message)
+
+    const nameById = new Map((data ?? []).map((row) => [row.id, row.name as string | null]))
+
+    return tracks.map((track) => ({
+        ...track,
+        artist_name: track.artist_id ? nameById.get(track.artist_id) ?? null : null,
+    }))
+}
+
+function firstJoinedRow<T>(value: T | T[] | null | undefined): T | null {
+    if (!value) return null
+    return Array.isArray(value) ? (value[0] ?? null) : value
+}
+
+function coalesceAssetUrl(...values: Array<string | null | undefined>): string {
+    for (const value of values) {
+        const normalized = normalizePublicAssetUrl(value) ?? (typeof value === "string" ? value.trim() : "")
+        if (normalized) return normalized
+    }
+    return ""
+}
+
+export function normalizeNicheTrackUrls<T extends Record<string, unknown>>(
+    track: T,
+    releaseArtworkUrl?: string | null
+): T & { artwork_url: string; music_url: string } {
+    return {
+        ...track,
+        artwork_url: coalesceAssetUrl(
+            typeof track.artwork_url === "string" ? track.artwork_url : null,
+            releaseArtworkUrl
+        ),
+        music_url: coalesceAssetUrl(typeof track.music_url === "string" ? track.music_url : null),
+    }
+}
+
+function releaseArtworkFromTrackJoins(
+    releaseTracks: unknown
+): string {
+    if (!Array.isArray(releaseTracks)) return ""
+
+    for (const row of releaseTracks) {
+        if (!row || typeof row !== "object") continue
+        const release = firstJoinedRow(
+            (row as { release?: { artwork_url?: string | null } | Array<{ artwork_url?: string | null }> }).release
+        )
+        const artwork = coalesceAssetUrl(release?.artwork_url ?? null)
+        if (artwork) return artwork
+    }
+
+    return ""
+}
+
+export async function fetchNicheTrackDetail(trackId: string, viewerUserId?: string) {
+    const { data, error } = await supabase.schema("public").from("niche_tracks").select(`
+        *,
+        owner:profiles!niche_tracks_owner_id_fkey(*),
+        metadata:niche_track_metadata(
+            mood,
+            energy,
+            danceability,
+            valence,
+            intensity,
+            topics,
+            language,
+            explicit_score,
+            metadata
+        ),
+        credits:niche_track_artists!niche_track_artists_track_id_fkey(
+            track_id,
+            artist_id,
+            is_primary,
+            artist:profiles!niche_track_artists_artist_id_fkey(
+                id,
+                username,
+                display_name,
+                avatar_url,
+                is_verified
+            )
+        ),
+        release_tracks:niche_release_tracks(
+            release:niche_releases(artwork_url)
+        )
+    `).eq("id", trackId).maybeSingle()
+
+    if (error) throw new Error(error.message)
+    if (!data) return null
+
+    if (data.visibility === "private" && data.owner_id !== viewerUserId) {
+        return null
+    }
+
+    const releaseArtworkUrl = releaseArtworkFromTrackJoins(data.release_tracks)
+    const { release_tracks: _releaseTracks, ...trackRow } = data
+    const track = normalizeNicheTrackUrls(trackRow, releaseArtworkUrl)
+    const viewer = viewerUserId
+        ? await getNicheTrackViewerContext(viewerUserId, trackId)
+        : { isLiked: false, isSaved: false }
+
+    return { track, viewer }
+}
+
+export async function getNicheTrackViewerContextMap(userId: string, trackIds: string[]) {
+    if (!trackIds.length) return new Map<string, { isLiked: boolean; isSaved: boolean }>()
+
+    const [{ data: likes }, { data: saves }] = await Promise.all([
+        supabase.schema("public").from("niche_track_likes").select("track_id").eq("liker_id", userId).in("track_id", trackIds),
+        supabase.schema("public").from("niche_track_saves").select("track_id").eq("saver_id", userId).in("track_id", trackIds),
+    ])
+
+    const likedSet = new Set((likes ?? []).map((row) => row.track_id))
+    const savedSet = new Set((saves ?? []).map((row) => row.track_id))
+
+    return new Map(trackIds.map((id) => [id, { isLiked: likedSet.has(id), isSaved: savedSet.has(id) }]))
+}
+
+export async function fetchNicheReleaseDetail(releaseId: string, viewerUserId?: string) {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("niche_releases")
+        .select(`
+            *,
+            owner:profiles!niche_releases_owner_id_fkey(*),
+            release_tracks:niche_release_tracks(
+                track_number,
+                track:niche_tracks!niche_release_tracks_track_id_fkey(
+                    *,
+                    credits:niche_track_artists!niche_track_artists_track_id_fkey(
+                        track_id,
+                        artist_id,
+                        is_primary,
+                        artist:profiles!niche_track_artists_artist_id_fkey(
+                            id,
+                            username,
+                            display_name,
+                            avatar_url,
+                            is_verified
+                        )
+                    )
+                )
+            )
+        `)
+        .eq("id", releaseId)
+        .is("deleted_at", null)
+        .maybeSingle()
+
+    if (error) throw new Error(error.message)
+    if (!data) return null
+
+    if (data.visibility === "private" && data.owner_id !== viewerUserId) {
+        return null
+    }
+
+    type ReleaseTrackJoin = {
+        track_number: number | null
+        track: Record<string, unknown> | Record<string, unknown>[] | null
+    }
+
+    const releaseTracks = ((data.release_tracks ?? []) as ReleaseTrackJoin[])
+        .map((row) => ({
+            track_number: row.track_number,
+            track: firstJoinedRow(row.track),
+        }))
+        .filter((row): row is { track_number: number | null; track: Record<string, unknown> } => {
+            if (!row.track) return false
+            return !row.track.deleted_at
+        })
+        .sort((a, b) => (a.track_number ?? 0) - (b.track_number ?? 0))
+
+    const trackIds = releaseTracks.map((row) => String(row.track.id))
+    const trackViewerMap = viewerUserId
+        ? await getNicheTrackViewerContextMap(viewerUserId, trackIds)
+        : new Map<string, { isLiked: boolean; isSaved: boolean }>()
+
+    const releaseArtworkUrl = coalesceAssetUrl(
+        typeof data.artwork_url === "string" ? data.artwork_url : null
+    )
+
+    const tracks = releaseTracks.map((row) => {
+        const track = row.track
+        return normalizeNicheTrackUrls(
+            {
+                ...track,
+                name: track.name ?? "Untitled",
+                track_number: row.track_number,
+                credits: track.credits ?? [],
+                viewer: trackViewerMap.get(String(track.id)) ?? { isLiked: false, isSaved: false },
+            },
+            releaseArtworkUrl
+        )
+    })
+
+    const { release_tracks: _releaseTracks, owner, ...release } = data
+
+    return {
+        release,
+        owner,
+        tracks,
+        track_count: tracks.length,
+        viewer: { isLiked: false, isSaved: false },
+    }
 }

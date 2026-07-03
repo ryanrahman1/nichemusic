@@ -1,9 +1,14 @@
 import { z } from "zod"
 import { baseMetadataSchema, successResponseSchema } from "../../global/schemas.js"
+import { normalizeQueryDateTime } from "../../lib/datetime.js"
 
+const cursorCreatedAtQuerySchema = z.preprocess(
+  (value) => (typeof value === "string" && value.length > 0 ? normalizeQueryDateTime(value) : value),
+  z.string().datetime({ offset: true }).optional()
+)
 
 export const postListQuerySchema = z.object({
-  cursorCreatedAt: z.string().datetime().optional(),
+  cursorCreatedAt: cursorCreatedAtQuerySchema,
   cursorId: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 })
@@ -88,14 +93,20 @@ export const createPostContentInputSchema = z.object({
   metadata: postMetadataSchema.default({}),
 })
 
-export const createPostSchema = z.object({
-  postId: z.string().min(1),
-  groupId: z.string().nullable().optional(),
-  kind: postKindSchema,
-  visibility: postVisibilitySchema.default("public"),
-  trackId: z.string().nullable().optional(),
-  content: createPostContentInputSchema,
-})
+export const createPostSchema = z
+  .object({
+    postId: z.string().min(1),
+    groupId: z.string().nullable().optional(),
+    kind: postKindSchema,
+    visibility: postVisibilitySchema.default("public"),
+    trackId: z.string().nullable().optional(),
+    nicheTrackId: z.string().nullable().optional(),
+    content: createPostContentInputSchema,
+  })
+  .refine(
+    (data) => !(data.trackId && data.nicheTrackId),
+    { message: "Cannot attach both a catalog track and a niche track" }
+  )
 
 export const presignPostUploadSchema = z.discriminatedUnion("mediaKind", [
   z.object({
@@ -117,6 +128,7 @@ export const createPostResultSchema = z.object({
     group_id: z.string().nullable(),
     kind: postKindSchema,
     track_id: z.string().nullable(),
+    niche_track_id: z.string().nullable(),
     visibility: postVisibilitySchema,
     like_count: z.number().int(),
     repost_count: z.number().int(),
@@ -158,11 +170,17 @@ export const updatePostContentSchema = z.object({
   metadata: postMetadataSchema.optional(),
 })
 
-export const updatePostSchema = z.object({
-  visibility: postVisibilitySchema.optional(),
-  trackId: z.string().nullable().optional(),
-  content: updatePostContentSchema.optional(),
-})
+export const updatePostSchema = z
+  .object({
+    visibility: postVisibilitySchema.optional(),
+    trackId: z.string().nullable().optional(),
+    nicheTrackId: z.string().nullable().optional(),
+    content: updatePostContentSchema.optional(),
+  })
+  .refine(
+    (data) => data.trackId === undefined || data.nicheTrackId === undefined || !(data.trackId && data.nicheTrackId),
+    { message: "Cannot attach both a catalog track and a niche track" }
+  )
 
 export type UpdatePostSchema = z.infer<typeof updatePostSchema>
 

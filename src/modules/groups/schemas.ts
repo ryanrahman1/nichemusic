@@ -1,8 +1,14 @@
 import { z } from "zod"
+import { normalizeQueryDateTime } from "../../lib/datetime.js"
+
+const cursorCreatedAtQuerySchema = z.preprocess(
+    (value) => (typeof value === "string" && value.length > 0 ? normalizeQueryDateTime(value) : value),
+    z.string().datetime({ offset: true }).optional()
+)
 
 export const groupPostsQuerySchema = z.object({
     sort: z.enum(["new", "old", "top_today", "top_week", "top_month", "top_year", "top_all"]).default("new"),
-    cursorCreatedAt: z.string().datetime().optional(),
+    cursorCreatedAt: cursorCreatedAtQuerySchema,
     cursorId: z.string().optional(),
     cursorScore: z.coerce.number().optional(),
     limit: z.coerce.number().int().min(1).max(50).default(20),

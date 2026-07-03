@@ -5,14 +5,22 @@ import { generateRandomId } from "../../lib/auth.js" // placeholder
 import { getGroupAvatarPresignedUrl } from "../../lib/image.js"
 import { presignGroupUploadSchema, createGroupSchema, updateGroupSchema, inviteUserToGroupSchema, acceptGroupRequestSchema, promoteMemberToRoleSchema, groupPostsQuerySchema } from "./schemas.js"
 import { slugifyString, checkSlugAvailability, getPublicUrl } from "./helpers.js"
-import { getPostViewerContextMap } from "../posts/helpers.js"
+import { getPostViewerContextMap, POST_LIST_SELECT } from "../posts/helpers.js"
+import { toUtcZulu } from "../../lib/datetime.js"
 
 function encodePostCursor(input: { cursorCreatedAt: string; cursorId: string }) {
-    return JSON.stringify(input)
+    return JSON.stringify({
+        cursorCreatedAt: toUtcZulu(input.cursorCreatedAt),
+        cursorId: input.cursorId,
+    })
 }
 
 function encodeScoreCursor(input: { cursorScore: number; cursorCreatedAt: string; cursorId: string }) {
-    return JSON.stringify(input)
+    return JSON.stringify({
+        cursorScore: input.cursorScore,
+        cursorCreatedAt: toUtcZulu(input.cursorCreatedAt),
+        cursorId: input.cursorId,
+    })
 }
 
 const groupsRoutes: FastifyPluginAsync = async (app) => {
@@ -495,7 +503,7 @@ const groupsRoutes: FastifyPluginAsync = async (app) => {
         const { data: joinedPosts, error: joinedPostsError } = await supabase
             .schema("public")
             .from("posts")
-            .select("*, owner:profiles!posts_owner_id_fkey(id, username, avatar_url), group:groups!posts_group_id_fkey(id, name), track:tracks!posts_track_id_fkey(id, source, source_id, name, artwork_url, preview_url, artist:artists!tracks_artist_id_fkey(id, name))")
+            .select(POST_LIST_SELECT)
             .in("id", postIds)
 
         if (joinedPostsError) return sendError(res, "GROUP_POSTS_FETCH_FAILED", joinedPostsError.message, 500)

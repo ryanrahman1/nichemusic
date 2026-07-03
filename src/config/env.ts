@@ -39,8 +39,13 @@ const envSchema = z.object({
     admin: z.object({
         userIds: z.array(z.string()).default([]),
     }),
+    cronSecret: z.string().optional(),
     port: z.coerce.number().default(3932),
     state: z.enum(["development", "production"]).default("development"),
+    resendApiKey: z.string(),
+    emailCodePepper: z.string(),
+    passwordResetBaseUrl: z.url(),
+    apiPublicUrl: z.url(),
 })
 
 export const env = envSchema.parse({
@@ -83,7 +88,13 @@ export const env = envSchema.parse({
             .map((v) => v.trim())
             .filter((v) => v.length > 0),
     },
+    cronSecret: process.env.CRON_SECRET,
     port: process.env.PORT,
+    state: process.env.STATE,
+    resendApiKey: process.env.RESEND_API_KEY!,
+    emailCodePepper: process.env.EMAIL_CODE_PEPPER!,
+    passwordResetBaseUrl: process.env.PASSWORD_RESET_BASE_URL ?? "https://auth.nichemusic.app",
+    apiPublicUrl: process.env.API_PUBLIC_URL ?? "https://api.nichemusic.app",
 })
 
 export default env

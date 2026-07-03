@@ -1,8 +1,10 @@
 import { supabase } from "../../config/supabase.js"
-import { getPostViewerContextMap } from "../posts/helpers.js"
+import { getOrSetCachedValue } from "../../lib/ttlCache.js"
+import { getPostViewerContextMap, POST_LIST_SELECT } from "../posts/helpers.js"
 
 export type FeedCursor = {
-    seenIds: string[]
+    /** Post/feed-item ids already returned to the client for this feed session. */
+    deliveredIds: string[]
 }
 
 export type FeedServiceParams = {
@@ -41,12 +43,25 @@ type FeedTrack = {
     artist?: FeedArtist | null
 }
 
+type FeedNicheTrack = {
+    id: string
+    name: string
+    artwork_url: string | null
+    music_url: string | null
+    moment_url: string | null
+    duration_ms: number | null
+    explicit: boolean
+    release_date: string | null
+    owner?: { id: string; username: string; avatar_url: string | null } | null
+}
+
 type FeedPostCandidate = {
     id: string
     owner_id: string | null
     group_id: string | null
     kind: string
     track_id: string | null
+    niche_track_id: string | null
     visibility: "public" | "private" | "group" | string
     like_count: number
     repost_count: number
@@ -59,10 +74,12 @@ type FeedPostCandidate = {
     has_media: boolean
     has_track: boolean
     has_sound: boolean
+    deleted_at?: string | null
     random_key?: number | null
     owner?: FeedOwner | null
     group?: FeedGroup | null
     track?: FeedTrack | null
+    niche_track?: FeedNicheTrack | null
 }
 
 type FeedItemRow = {
@@ -130,45 +147,21 @@ type RankedFeedItemEntry = {
 
 type RankedFeedEntry = RankedPostEntry | RankedFeedItemEntry
 
-const POST_SELECT = `
-*,
-owner:profiles!posts_owner_id_fkey(
-    id,
-    username,
-    display_name,
-    avatar_url,
-    is_private,
-    is_verified,
-    verification_type
-),
-group:groups!posts_group_id_fkey(
-    id,
-    name
-),
-track:tracks!posts_track_id_fkey(
-    id,
-    source,
-    source_id,
-    name,
-    artwork_url,
-    preview_url,
-    artist:artists!tracks_artist_id_fkey(
-        id,
-        name
-    )
-)
-`
+const FEED_POST_SELECT = POST_LIST_SELECT
+const MAX_OWNER_IDS_PER_QUERY = 80
+const FEED_CONTEXT_CACHE_TTL_MS = 45_000
+const FEED_ITEMS_CACHE_TTL_MS = 120_000
 
 export const FEED_CONFIG = {
     candidateLimits: {
-        following: 90,
-        friends: 70,
-        groups: 70,
-        trackAffinity: 70,
-        artistAffinity: 70,
-        trending: 90,
-        explore: 90,
-        feedItems: 20,
+        following: 40,
+        friends: 32,
+        groups: 32,
+        trackAffinity: 32,
+        artistAffinity: 32,
+        trending: 40,
+        explore: 32,
+        feedItems: 12,
     },
     recency: {
         maxHours: 168,
@@ -204,24 +197,65 @@ export const FEED_CONFIG = {
     },
 } as const
 
+type FeedCandidateLimits = {
+    following: number
+    friends: number
+    groups: number
+    trackAffinity: number
+    artistAffinity: number
+    trending: number
+    explore: number
+    feedItems: number
+}
+
+function getCandidateLimits(pageLimit: number, isPaginating: boolean): FeedCandidateLimits {
+    if (!isPaginating) {
+        return { ...FEED_CONFIG.candidateLimits }
+    }
+
+    const bucket = Math.min(24, Math.max(pageLimit * 3, 16))
+
+    return {
+        following: bucket,
+        friends: bucket,
+        groups: bucket,
+        trackAffinity: bucket,
+        artistAffinity: bucket,
+        trending: bucket,
+        explore: 0,
+        feedItems: FEED_CONFIG.candidateLimits.feedItems,
+    }
+}
+
+function fetchBucket(limit: number, loader: () => Promise<FeedPostCandidate[]>) {
+    if (limit <= 0) return Promise.resolve([])
+    return loader()
+}
+
 function encodeFeedCursor(cursor: FeedCursor) {
     return Buffer.from(JSON.stringify(cursor)).toString("base64url")
 }
 
 function decodeFeedCursor(cursor?: string): FeedCursor {
-    if (!cursor) return { seenIds: [] }
+    if (!cursor) return { deliveredIds: [] }
 
     try {
-        const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<FeedCursor>
+        const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<
+            FeedCursor & { seenIds?: string[] }
+        >
+        const rawIds = Array.isArray(parsed.deliveredIds)
+            ? parsed.deliveredIds
+            : Array.isArray(parsed.seenIds)
+              ? parsed.seenIds
+              : []
+
         return {
-            seenIds: Array.isArray(parsed.seenIds)
-                ? parsed.seenIds
-                    .filter((id): id is string => typeof id === "string")
-                    .slice(-FEED_CONFIG.seen.cursorMaxSeenIds)
-                : [],
+            deliveredIds: rawIds
+                .filter((id): id is string => typeof id === "string")
+                .slice(-FEED_CONFIG.seen.cursorMaxSeenIds),
         }
     } catch {
-        return { seenIds: [] }
+        return { deliveredIds: [] }
     }
 }
 
@@ -251,6 +285,7 @@ function recentIso(daysAgo: number) {
 }
 
 function canSeePost(post: FeedPostCandidate, ctx: FeedUserContext, viewerId?: string | null) {
+    if (post.deleted_at) return false
     if (!post.owner_id) return false
 
     if (ctx.blockedUserIds.has(post.owner_id)) return false
@@ -272,14 +307,24 @@ function canSeePost(post: FeedPostCandidate, ctx: FeedUserContext, viewerId?: st
 }
 
 function shouldExcludePost(post: FeedPostCandidate, ctx: FeedUserContext, viewerId?: string | null) {
-    if (!canSeePost(post, ctx, viewerId)) return true
+    return !canSeePost(post, ctx, viewerId)
+}
 
-    if (ctx.seenPostIds.has(post.id)) return true
-    if (ctx.skippedPostIds.has(post.id)) return true
-    if (ctx.viewedPostIds.has(post.id)) return true
-    if (ctx.impressedPostIds.has(post.id)) return true
+function getSeenPenalty(post: FeedPostCandidate, ctx: FeedUserContext) {
+    if (ctx.skippedPostIds.has(post.id)) return 90
+    if (ctx.viewedPostIds.has(post.id)) return 70
+    if (ctx.impressedPostIds.has(post.id)) return 55
+    if (ctx.seenPostIds.has(post.id)) return 45
+    return 0
+}
 
-    return false
+function isSeenPost(post: FeedPostCandidate, ctx: FeedUserContext) {
+    return (
+        ctx.seenPostIds.has(post.id) ||
+        ctx.impressedPostIds.has(post.id) ||
+        ctx.viewedPostIds.has(post.id) ||
+        ctx.skippedPostIds.has(post.id)
+    )
 }
 
 function engagementScore(post: FeedPostCandidate) {
@@ -318,6 +363,8 @@ function scorePost(post: FeedPostCandidate, source: FeedSource, ctx: FeedUserCon
     if (post.owner_id && ctx.openedProfileIds.has(post.owner_id)) {
         score -= FEED_CONFIG.weights.openedProfilePenalty
     }
+
+    score -= getSeenPenalty(post, ctx)
 
     // Tiny exploration jitter. Keeps close scores from feeling frozen.
     score += Math.random() * 5
@@ -361,7 +408,6 @@ async function getUserFeedContext(userId?: string | null): Promise<FeedUserConte
         trackLikesRes,
         trackSavesRes,
         artistFansRes,
-        profileOpenRes,
         blockedRes,
         blockingRes,
     ] = await Promise.all([
@@ -373,58 +419,47 @@ async function getUserFeedContext(userId?: string | null): Promise<FeedUserConte
 
         supabase.schema("public").from("group_members").select("group_id").eq("user_id", userId),
 
-        supabase.schema("public").from("post_likes").select("post_id").eq("liker_id", userId),
-        supabase.schema("public").from("post_reposts").select("post_id").eq("reposter_id", userId),
+        supabase.schema("public").from("post_likes").select("post_id").eq("liker_id", userId).limit(400),
+        supabase.schema("public").from("post_reposts").select("post_id").eq("reposter_id", userId).limit(400),
 
         supabase
             .schema("public")
             .from("feed_events")
-            .select("entity_id, event_type")
+            .select("entity_id, entity_type, event_type")
             .eq("user_id", userId)
-            .eq("entity_type", "post")
-            .in("event_type", ["impression", "view", "skip"])
             .gte("created_at", seenSince)
-            .limit(500),
+            .limit(600),
 
-        supabase.schema("public").from("track_likes").select("track_id").eq("user_id", userId),
-        supabase.schema("public").from("track_saves").select("track_id").eq("user_id", userId),
-        supabase.schema("public").from("artist_fans").select("artist_id").eq("user_id", userId),
-
-        supabase
-            .schema("public")
-            .from("feed_events")
-            .select("entity_id")
-            .eq("user_id", userId)
-            .eq("entity_type", "profile")
-            .eq("event_type", "open_profile")
-            .gte("created_at", seenSince)
-            .limit(300),
+        supabase.schema("public").from("track_likes").select("track_id").eq("user_id", userId).limit(300),
+        supabase.schema("public").from("track_saves").select("track_id").eq("user_id", userId).limit(300),
+        supabase.schema("public").from("artist_fans").select("artist_id").eq("user_id", userId).limit(200),
 
         supabase.schema("public").from("blocks").select("blocked_id").eq("blocker_id", userId),
         supabase.schema("public").from("blocks").select("blocker_id").eq("blocked_id", userId),
     ])
 
     const feedEvents = feedEventsRes.data ?? []
+    const postFeedEvents = feedEvents.filter((row) => row.entity_type === "post")
 
     const impressedPostIds = new Set(
-        feedEvents
+        postFeedEvents
             .filter((row) => row.event_type === "impression")
             .map((row) => row.entity_id)
     )
 
     const viewedPostIds = new Set(
-        feedEvents
+        postFeedEvents
             .filter((row) => row.event_type === "view")
             .map((row) => row.entity_id)
     )
 
     const skippedPostIds = new Set(
-        feedEvents
+        postFeedEvents
             .filter((row) => row.event_type === "skip")
             .map((row) => row.entity_id)
     )
 
-    const seenPostIds = new Set(feedEvents.map((row) => row.entity_id))
+    const seenPostIds = new Set(postFeedEvents.map((row) => row.entity_id))
 
     return {
         followIds: uniqueStrings((followsRes.data ?? []).map((row) => row.following_id)),
@@ -446,11 +481,31 @@ async function getUserFeedContext(userId?: string | null): Promise<FeedUserConte
         likedTrackIds: new Set(uniqueStrings((trackLikesRes.data ?? []).map((row) => row.track_id))),
         savedTrackIds: new Set(uniqueStrings((trackSavesRes.data ?? []).map((row) => row.track_id))),
         fannedArtistIds: new Set(uniqueStrings((artistFansRes.data ?? []).map((row) => row.artist_id))),
-        openedProfileIds: new Set(uniqueStrings((profileOpenRes.data ?? []).map((row) => row.entity_id))),
+        openedProfileIds: new Set(
+            uniqueStrings(
+                feedEvents
+                    .filter(
+                        (row) =>
+                            row.entity_type === "profile" && row.event_type === "open_profile"
+                    )
+                    .map((row) => row.entity_id)
+            )
+        ),
 
         blockedUserIds: new Set(uniqueStrings((blockedRes.data ?? []).map((row) => row.blocked_id))),
         blockingUserIds: new Set(uniqueStrings((blockingRes.data ?? []).map((row) => row.blocker_id))),
     }
+}
+
+async function getUserFeedContextCached(userId?: string | null): Promise<FeedUserContext> {
+    if (!userId) return getUserFeedContext(null)
+
+    return getOrSetCachedValue({
+        namespace: "feed:user-context",
+        key: userId,
+        ttlMs: FEED_CONTEXT_CACHE_TTL_MS,
+        loader: () => getUserFeedContext(userId),
+    })
 }
 
 async function fetchPostsByOwners(
@@ -469,11 +524,13 @@ async function fetchPostsByOwners(
 
     if (!filteredOwnerIds.length) return []
 
+    const cappedOwnerIds = filteredOwnerIds.slice(0, MAX_OWNER_IDS_PER_QUERY)
+
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
-        .in("owner_id", filteredOwnerIds)
+        .select(FEED_POST_SELECT)
+        .in("owner_id", cappedOwnerIds)
         .order("created_at", { ascending: false })
         .limit(limit * 2)
 
@@ -490,7 +547,7 @@ async function fetchGroupPosts(ctx: FeedUserContext, viewerId: string | null | u
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
+        .select(FEED_POST_SELECT)
         .eq("visibility", "group")
         .in("group_id", ctx.groupIds)
         .order("created_at", { ascending: false })
@@ -511,7 +568,7 @@ async function fetchTrackAffinityPosts(ctx: FeedUserContext, viewerId: string | 
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
+        .select(FEED_POST_SELECT)
         .eq("visibility", "public")
         .in("track_id", trackIds)
         .order("created_at", { ascending: false })
@@ -525,27 +582,33 @@ async function fetchTrackAffinityPosts(ctx: FeedUserContext, viewerId: string | 
 }
 
 async function fetchArtistAffinityPosts(ctx: FeedUserContext, viewerId: string | null | undefined, limit: number) {
-    if (!ctx.fannedArtistIds.size) return []
+    const artistIds = [...ctx.fannedArtistIds].slice(0, 40)
+    if (!artistIds.length) return []
 
-    // Supabase nested filtering on joined artist ids can get annoying.
-    // Keep this lightweight: fetch public track posts and filter in Node.
-    // With your current scale this is perfectly fine.
+    const { data: tracks, error: trackError } = await supabase
+        .schema("public")
+        .from("tracks")
+        .select("id")
+        .in("artist_id", artistIds)
+        .limit(120)
+
+    if (trackError) throw new Error(trackError.message)
+
+    const trackIds = uniqueStrings((tracks ?? []).map((row) => row.id))
+    if (!trackIds.length) return []
+
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
+        .select(FEED_POST_SELECT)
         .eq("visibility", "public")
-        .not("track_id", "is", null)
+        .in("track_id", trackIds)
         .order("created_at", { ascending: false })
-        .limit(limit * 4)
+        .limit(limit * 2)
 
     if (error) throw new Error(error.message)
 
     return ((data ?? []) as FeedPostCandidate[])
-        .filter((post) => {
-            const artistId = getPostArtistId(post)
-            return artistId ? ctx.fannedArtistIds.has(artistId) : false
-        })
         .filter((post) => !shouldExcludePost(post, ctx, viewerId))
         .slice(0, limit)
 }
@@ -556,7 +619,7 @@ async function fetchTrendingFreshPosts(ctx: FeedUserContext, viewerId: string | 
     const { data, error } = await supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
+        .select(FEED_POST_SELECT)
         .eq("visibility", "public")
         .gte("created_at", since)
         .order("like_count", { ascending: false })
@@ -578,7 +641,7 @@ async function fetchFreshExplorePosts(ctx: FeedUserContext, viewerId: string | n
     const firstQuery = supabase
         .schema("public")
         .from("posts")
-        .select(POST_SELECT)
+        .select(FEED_POST_SELECT)
         .eq("visibility", "public")
         .gte("random_key", pivot)
         .order("random_key", { ascending: true })
@@ -593,7 +656,7 @@ async function fetchFreshExplorePosts(ctx: FeedUserContext, viewerId: string | n
         const { data: secondData, error: secondError } = await supabase
             .schema("public")
             .from("posts")
-            .select(POST_SELECT)
+            .select(FEED_POST_SELECT)
             .eq("visibility", "public")
             .lt("random_key", pivot)
             .order("random_key", { ascending: true })
@@ -609,7 +672,7 @@ async function fetchFreshExplorePosts(ctx: FeedUserContext, viewerId: string | n
         .slice(0, limit)
 }
 
-async function fetchActiveFeedItems() {
+async function fetchActiveFeedItemsUncached() {
     const { data, error } = await supabase
         .schema("public")
         .from("feed_items")
@@ -628,6 +691,15 @@ async function fetchActiveFeedItems() {
         const startsOk = !item.starts_at || new Date(item.starts_at).getTime() <= now
         const endsOk = !item.ends_at || new Date(item.ends_at).getTime() >= now
         return startsOk && endsOk
+    })
+}
+
+async function fetchActiveFeedItems() {
+    return getOrSetCachedValue({
+        namespace: "feed:active-items",
+        key: "home",
+        ttlMs: FEED_ITEMS_CACHE_TTL_MS,
+        loader: fetchActiveFeedItemsUncached,
     })
 }
 
@@ -790,16 +862,45 @@ async function populateViewer(userId: string | null | undefined, entries: Ranked
     })
 }
 
+function takeFeedPage(entries: RankedFeedEntry[], limit: number): RankedFeedEntry[] {
+    if (entries.length <= limit) return entries
+
+    const posts = entries.filter((entry): entry is RankedPostEntry => entry.type === "post")
+    const diversifiedPosts = diversifyPosts(posts, limit)
+    const selectedPostIds = new Set(diversifiedPosts.map((entry) => entry.id))
+
+    const page: RankedFeedEntry[] = []
+
+    for (const entry of entries) {
+        if (page.length >= limit) break
+
+        if (entry.type === "feed_item") {
+            page.push(entry)
+            continue
+        }
+
+        if (selectedPostIds.has(entry.id)) {
+            page.push(entry)
+        }
+    }
+
+    for (const entry of entries) {
+        if (page.length >= limit) break
+        if (page.some((item) => item.id === entry.id)) continue
+        page.push(entry)
+    }
+
+    return page.slice(0, limit)
+}
+
 export async function getHomeFeed(params: FeedServiceParams) {
     const { userId, limit } = params
     const cursor = decodeFeedCursor(params.cursor)
+    const deliveredSet = new Set(cursor.deliveredIds)
+    const isPaginating = cursor.deliveredIds.length > 0
+    const candidateLimits = getCandidateLimits(limit, isPaginating)
 
-    const ctx = await getUserFeedContext(userId)
-
-    for (const id of cursor.seenIds) {
-        ctx.seenPostIds.add(id)
-        ctx.impressedPostIds.add(id)
-    }
+    const ctx = await getUserFeedContextCached(userId)
 
     const [
         followingPosts,
@@ -811,13 +912,28 @@ export async function getHomeFeed(params: FeedServiceParams) {
         explorePosts,
         feedItems,
     ] = await Promise.all([
-        fetchPostsByOwners(ctx.followIds, ctx, userId, FEED_CONFIG.candidateLimits.following),
-        fetchPostsByOwners(ctx.friendIds, ctx, userId, FEED_CONFIG.candidateLimits.friends),
-        fetchGroupPosts(ctx, userId, FEED_CONFIG.candidateLimits.groups),
-        fetchTrackAffinityPosts(ctx, userId, FEED_CONFIG.candidateLimits.trackAffinity),
-        fetchArtistAffinityPosts(ctx, userId, FEED_CONFIG.candidateLimits.artistAffinity),
-        fetchTrendingFreshPosts(ctx, userId, FEED_CONFIG.candidateLimits.trending),
-        fetchFreshExplorePosts(ctx, userId, FEED_CONFIG.candidateLimits.explore),
+        fetchBucket(ctx.followIds.length ? candidateLimits.following : 0, () =>
+            fetchPostsByOwners(ctx.followIds, ctx, userId, candidateLimits.following)
+        ),
+        fetchBucket(ctx.friendIds.length ? candidateLimits.friends : 0, () =>
+            fetchPostsByOwners(ctx.friendIds, ctx, userId, candidateLimits.friends)
+        ),
+        fetchBucket(ctx.groupIds.length ? candidateLimits.groups : 0, () =>
+            fetchGroupPosts(ctx, userId, candidateLimits.groups)
+        ),
+        fetchBucket(
+            ctx.likedTrackIds.size || ctx.savedTrackIds.size ? candidateLimits.trackAffinity : 0,
+            () => fetchTrackAffinityPosts(ctx, userId, candidateLimits.trackAffinity)
+        ),
+        fetchBucket(ctx.fannedArtistIds.size ? candidateLimits.artistAffinity : 0, () =>
+            fetchArtistAffinityPosts(ctx, userId, candidateLimits.artistAffinity)
+        ),
+        fetchBucket(candidateLimits.trending, () =>
+            fetchTrendingFreshPosts(ctx, userId, candidateLimits.trending)
+        ),
+        fetchBucket(candidateLimits.explore, () =>
+            fetchFreshExplorePosts(ctx, userId, candidateLimits.explore)
+        ),
         fetchActiveFeedItems(),
     ])
 
@@ -831,24 +947,28 @@ export async function getHomeFeed(params: FeedServiceParams) {
         { source: "fresh_explore", posts: explorePosts },
     ])
 
-    const diversifiedPosts = diversifyPosts(rankedPosts, limit + 8)
-    const fullFeed = injectPriorityFeedItems(diversifiedPosts, feedItems)
+    const unseenPosts = rankedPosts.filter((entry) => !isSeenPost(entry.post, ctx))
+    const seenPosts = rankedPosts.filter((entry) => isSeenPost(entry.post, ctx))
 
-    const pageEntries = fullFeed.slice(0, limit)
-    const hasMore = fullFeed.length > limit
+    // Unseen first; already-seen posts follow. If everything is seen, keep one ranked feed.
+    const orderedPosts =
+        unseenPosts.length > 0 ? [...unseenPosts, ...seenPosts] : rankedPosts
+
+    const fullFeed = injectPriorityFeedItems(orderedPosts, feedItems)
+    const available = fullFeed.filter((entry) => !deliveredSet.has(entry.id))
+    const pageEntries = takeFeedPage(available, limit)
+    const hasMore = available.length > pageEntries.length
 
     const items = await populateViewer(userId, pageEntries)
 
-    const newPostIds = pageEntries
-        .filter((entry): entry is RankedPostEntry => entry.type === "post")
-        .map((entry) => entry.id)
-
-    const nextSeenIds = uniqueStrings([...cursor.seenIds, ...newPostIds])
-        .slice(-FEED_CONFIG.seen.cursorMaxSeenIds)
+    const newDeliveredIds = uniqueStrings([
+        ...cursor.deliveredIds,
+        ...pageEntries.map((entry) => entry.id),
+    ]).slice(-FEED_CONFIG.seen.cursorMaxSeenIds)
 
     return {
         items,
-        nextCursor: hasMore ? encodeFeedCursor({ seenIds: nextSeenIds }) : null,
+        nextCursor: hasMore ? encodeFeedCursor({ deliveredIds: newDeliveredIds }) : null,
         hasMore,
     }
 }

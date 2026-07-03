@@ -2,9 +2,24 @@
 
 import { supabase } from "../../config/supabase.js"
 
+export const PROFILE_TYPE_COOLDOWN_DAYS = 14
+
+export function canUpdateProfileType(
+    typeUpdatedAt: string | null | undefined,
+    now: Date = new Date()
+): boolean {
+    if (!typeUpdatedAt) return true
+
+    const lastUpdated = new Date(typeUpdatedAt)
+    if (Number.isNaN(lastUpdated.getTime())) return true
+
+    const elapsedMs = now.getTime() - lastUpdated.getTime()
+    return elapsedMs >= PROFILE_TYPE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000
+}
+
 /** Same shape for `GET /me` and full `GET /users/:username` profile rows. */
 export const PROFILE_DETAIL_SELECT =
-    "*, user_status(*, track:tracks!user_status_track_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))"
+  "*, user_status(*, track:tracks!user_status_track_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name))), profile_song:tracks!profiles_profile_song_id_fkey(id, name, preview_url, artwork_url, source, source_id, artist:artists!tracks_artist_id_fkey(name)), badges:profile_badges!profile_badges_user_id_fkey(index, badge:badges!profile_badges_badge_id_fkey(id, text, color_hex, created_at))"
 
 /** Narrow profile fetch for `GET /me/friends/activity` (statuses loaded separately). */
 export const FRIEND_ACTIVITY_PROFILE_SELECT =
@@ -139,11 +154,41 @@ export async function getViewerProfileContext(
     }
 }
 
+export type ViewerBlockSets = {
+    blockedByViewer: Set<string>
+    blockedViewer: Set<string>
+}
+
+export async function getViewerBlockSets(viewerId: string): Promise<ViewerBlockSets> {
+    const [outRes, inRes] = await Promise.all([
+        supabase.schema("public").from("blocks").select("blocked_id").eq("blocker_id", viewerId),
+        supabase.schema("public").from("blocks").select("blocker_id").eq("blocked_id", viewerId),
+    ])
+
+    if (outRes.error) throw new Error(outRes.error.message)
+    if (inRes.error) throw new Error(inRes.error.message)
+
+    return {
+        blockedByViewer: new Set((outRes.data ?? []).map((row) => row.blocked_id as string)),
+        blockedViewer: new Set((inRes.data ?? []).map((row) => row.blocker_id as string)),
+    }
+}
+
+export function isBlockedWithViewer(sets: ViewerBlockSets, targetUserId: string): boolean {
+    return sets.blockedByViewer.has(targetUserId) || sets.blockedViewer.has(targetUserId)
+}
+
+export function filterBlockedUserIds(sets: ViewerBlockSets, ids: string[]): string[] {
+    return ids.filter((id) => !isBlockedWithViewer(sets, id))
+}
+
 export type FollowListProfileRow = {
     id: string
     username: string
     display_name: string | null
     avatar_url: string | null
+    profile_type: string | null
+    type_updated_at: string | null
 }
 
 /**
@@ -157,7 +202,7 @@ export async function profilesForUserIdsOrdered(ids: string[]): Promise<FollowLi
     const { data, error } = await supabase
         .schema("public")
         .from("profiles")
-        .select("id, username, display_name, avatar_url")
+        .select("id, username, display_name, avatar_url, profile_type, type_updated_at")
         .in("id", unique)
 
     if (error) {
@@ -172,6 +217,8 @@ export async function profilesForUserIdsOrdered(ids: string[]): Promise<FollowLi
                 username: row.username,
                 display_name: row.display_name,
                 avatar_url: row.avatar_url,
+                profile_type: row.profile_type ?? null,
+                type_updated_at: row.type_updated_at ?? null,
             } satisfies FollowListProfileRow,
         ])
     )
@@ -371,4 +418,290 @@ export function buildFriendActivitiesFromFriendData(
     })
 
     return out
+}
+
+export type DiscographyItemType = "album" | "ep" | "single" | "featured_on"
+
+export type DiscographyItem = {
+    id: string
+    title: string
+    release_date: string
+    image_url: string | null
+    type: DiscographyItemType
+}
+
+const DISCOGRAPHY_TYPE_ORDER: Record<DiscographyItemType, number> = {
+    album: 0,
+    ep: 0,
+    single: 1,
+    featured_on: 2,
+}
+
+type DiscographyTrackRow = {
+    id: string
+    name: string
+    artwork_url: string | null
+    release_date: string | null
+    owner_id: string
+}
+
+function mapTrackToDiscographyItem(
+    track: DiscographyTrackRow,
+    type: DiscographyItemType
+): DiscographyItem | null {
+    if (!track.release_date) return null
+
+    return {
+        id: track.id,
+        title: track.name,
+        release_date: track.release_date,
+        image_url: track.artwork_url,
+        type,
+    }
+}
+
+type DiscographyReleaseRow = {
+    id: string
+    name: string
+    artwork_url: string | null
+    release_date: string | null
+    release_type: string
+    owner_id: string
+}
+
+function mapReleaseToDiscographyItem(release: DiscographyReleaseRow): DiscographyItem | null {
+    if (!release.release_date) return null
+
+    return {
+        id: release.id,
+        title: release.name,
+        release_date: release.release_date,
+        image_url: release.artwork_url,
+        type: release.release_type === "ep" ? "ep" : "album",
+    }
+}
+
+function compareDiscographyItems(a: DiscographyItem, b: DiscographyItem): number {
+    const typeDiff = DISCOGRAPHY_TYPE_ORDER[a.type] - DISCOGRAPHY_TYPE_ORDER[b.type]
+    if (typeDiff !== 0) return typeDiff
+
+    const dateDiff = b.release_date.localeCompare(a.release_date)
+    if (dateDiff !== 0) return dateDiff
+
+    return b.id.localeCompare(a.id)
+}
+
+function isAfterDiscographyCursor(
+    item: DiscographyItem,
+    cursor: { cursorReleaseDate: string; cursorType: DiscographyItemType; cursorId: string }
+): boolean {
+    const itemTypeRank = DISCOGRAPHY_TYPE_ORDER[item.type]
+    const cursorTypeRank = DISCOGRAPHY_TYPE_ORDER[cursor.cursorType]
+
+    if (itemTypeRank > cursorTypeRank) return true
+    if (itemTypeRank < cursorTypeRank) return false
+
+    if (item.release_date < cursor.cursorReleaseDate) return true
+    if (item.release_date > cursor.cursorReleaseDate) return false
+
+    return item.id < cursor.cursorId
+}
+
+async function fetchOwnedReleaseTrackIds(userId: string): Promise<Set<string>> {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("niche_release_tracks")
+        .select("track_id, release:niche_releases!inner(owner_id)")
+        .eq("release.owner_id", userId)
+
+    if (error) throw new Error(error.message)
+
+    return new Set(
+        (data ?? [])
+            .map((row) => row.track_id)
+            .filter((trackId): trackId is string => typeof trackId === "string" && trackId.length > 0)
+    )
+}
+
+async function fetchOwnedDiscographyTracks(userId: string, publicOnly: boolean) {
+    const releaseTrackIds = await fetchOwnedReleaseTrackIds(userId)
+
+    let query = supabase
+        .schema("public")
+        .from("niche_tracks")
+        .select("id, name, artwork_url, release_date, owner_id")
+        .eq("owner_id", userId)
+        .is("deleted_at", null)
+        .not("release_date", "is", null)
+
+    if (publicOnly) {
+        query = query.eq("visibility", "public")
+    }
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    return (data ?? []).filter((track) => !releaseTrackIds.has(track.id)) as DiscographyTrackRow[]
+}
+
+async function fetchOwnedDiscographyReleases(userId: string, publicOnly: boolean) {
+    let query = supabase
+        .schema("public")
+        .from("niche_releases")
+        .select("id, name, artwork_url, release_date, release_type, owner_id")
+        .eq("owner_id", userId)
+        .is("deleted_at", null)
+        .not("release_date", "is", null)
+
+    if (publicOnly) {
+        query = query.eq("visibility", "public")
+    }
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    return (data ?? []) as DiscographyReleaseRow[]
+}
+
+async function fetchFeaturedDiscographyTracks(userId: string, publicOnly: boolean) {
+    let query = supabase
+        .schema("public")
+        .from("niche_track_artists")
+        .select(`
+            track:niche_tracks!niche_track_artists_track_id_fkey(
+                id,
+                name,
+                artwork_url,
+                release_date,
+                owner_id,
+                visibility,
+                deleted_at
+            )
+        `)
+        .eq("artist_id", userId)
+        .eq("is_primary", false)
+
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+
+    const tracks: DiscographyTrackRow[] = []
+    const seen = new Set<string>()
+
+    for (const row of data ?? []) {
+        const track = Array.isArray(row.track) ? row.track[0] : row.track
+        if (!track || typeof track !== "object") continue
+
+        const typed = track as DiscographyTrackRow & {
+            visibility?: string | null
+            deleted_at?: string | null
+        }
+
+        if (typed.deleted_at) continue
+        if (typed.owner_id === userId) continue
+        if (!typed.release_date) continue
+        if (publicOnly && typed.visibility !== "public") continue
+        if (seen.has(typed.id)) continue
+
+        seen.add(typed.id)
+        tracks.push(typed)
+    }
+
+    return tracks
+}
+
+export async function fetchDiscographyPage(input: {
+    userId: string
+    publicOnly: boolean
+    type?: "all" | DiscographyItemType
+    cursorReleaseDate?: string | undefined
+    cursorType?: DiscographyItemType | undefined
+    cursorId?: string | undefined
+    limit: number
+}) {
+    const filterType = input.type ?? "all"
+    const [ownedTracks, ownedReleases, featuredTracks] = await Promise.all([
+        fetchOwnedDiscographyTracks(input.userId, input.publicOnly),
+        fetchOwnedDiscographyReleases(input.userId, input.publicOnly),
+        fetchFeaturedDiscographyTracks(input.userId, input.publicOnly),
+    ])
+
+    const merged: DiscographyItem[] = []
+
+    for (const release of ownedReleases) {
+        const item = mapReleaseToDiscographyItem(release)
+        if (item) merged.push(item)
+    }
+
+    for (const track of ownedTracks) {
+        const item = mapTrackToDiscographyItem(track, "single")
+        if (item) merged.push(item)
+    }
+
+    for (const track of featuredTracks) {
+        const item = mapTrackToDiscographyItem(track, "featured_on")
+        if (item) merged.push(item)
+    }
+
+    merged.sort(compareDiscographyItems)
+
+    const filtered =
+        filterType === "all"
+            ? merged
+            : filterType === "album"
+              ? merged.filter((item) => item.type === "album" || item.type === "ep")
+              : merged.filter((item) => item.type === filterType)
+
+    const hasCursor = Boolean(input.cursorReleaseDate && input.cursorType && input.cursorId)
+    const cursor = hasCursor
+        ? {
+              cursorReleaseDate: input.cursorReleaseDate!,
+              cursorType: input.cursorType!,
+              cursorId: input.cursorId!,
+          }
+        : null
+
+    const pageSource = cursor
+        ? filtered.filter((item) => isAfterDiscographyCursor(item, cursor))
+        : filtered
+
+    const hasMore = pageSource.length > input.limit
+    const items = hasMore ? pageSource.slice(0, input.limit) : pageSource
+    const last = items.at(-1)
+
+    const latestRelease =
+        !cursor && filterType === "all"
+            ? [...merged].sort((a, b) => {
+                  const dateDiff = b.release_date.localeCompare(a.release_date)
+                  if (dateDiff !== 0) return dateDiff
+                  const typeDiff = DISCOGRAPHY_TYPE_ORDER[a.type] - DISCOGRAPHY_TYPE_ORDER[b.type]
+                  if (typeDiff !== 0) return typeDiff
+                  return b.id.localeCompare(a.id)
+              })[0] ?? null
+            : null
+
+    return {
+        latestRelease,
+        items,
+        hasMore,
+        nextCursor:
+            hasMore && last
+                ? JSON.stringify({
+                      cursorReleaseDate: last.release_date,
+                      cursorType: last.type,
+                      cursorId: last.id,
+                  })
+                : null,
+    }
+}
+
+export async function getProfileByUsername(username: string) {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("profiles")
+        .select("id, username, is_private")
+        .eq("username", username)
+        .maybeSingle()
+
+    if (error) throw new Error(error.message)
+    return data
 }
