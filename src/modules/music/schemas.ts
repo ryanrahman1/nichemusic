@@ -257,3 +257,13 @@ export const draftMusicUploadSchema = z.object({
 export const listDraftsQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(50).default(50),
 })
+
+export const recordNicheTrackPlaySchema = z.object({
+    listenMs: z.number().int().min(30_000).default(30_000),
+    source: z.string().trim().min(1).max(64).optional(),
+    contextType: z.string().trim().min(1).max(64).optional(),
+    contextId: z.string().trim().min(1).max(64).optional(),
+    percentPlayed: z.number().min(0).max(1).optional(),
+    completed: z.boolean().optional(),
+    appVersion: z.string().trim().min(1).max(32).optional(),
+})

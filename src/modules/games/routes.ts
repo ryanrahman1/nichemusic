@@ -1,7 +1,43 @@
 import { FastifyPluginAsync } from "fastify"
+import { ZodError } from "zod"
 import { supabase } from "../../config/supabase.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { generateRandomId } from "../../lib/auth.js"
+import {
+    AuxBattleError,
+    castVote,
+    createAuxRoom,
+    createBracket,
+    createRematch,
+    createRoomSchema,
+    getRoomState,
+    joinAuxRoomByCode,
+    joinAuxRoomById,
+    joinByCodeSchema,
+    leaveAuxRoom,
+    markPlayAgain,
+    revealMatchup,
+    startBracket,
+    startMatchupA,
+    startMatchupB,
+    startSubmissions,
+    startVoting,
+    submitSong,
+    submitSongSchema,
+    updateAuxRoomSettings,
+    updateRoomSettingsSchema,
+    voteSchema,
+} from "./service.js"
+
+function handleAuxError(res: Parameters<typeof sendError>[0], err: unknown) {
+    if (err instanceof AuxBattleError) {
+        return sendError(res, err.code, err.message, err.status)
+    }
+    if (err instanceof ZodError) {
+        return sendError(res, "VALIDATION_ERROR", err.issues[0]?.message ?? "Invalid input", 400)
+    }
+    throw err
+}
 
 const gamesRoutes: FastifyPluginAsync = async (app) => {
 
@@ -147,6 +183,182 @@ const gamesRoutes: FastifyPluginAsync = async (app) => {
             response,
             alreadyAnswered: false,
         })
+    })
+
+
+    // aux battles
+
+    app.post('/games/aux/rooms/create', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const input = createRoomSchema.parse(req.body)
+            const room = await createAuxRoom(req.userId, input)
+            return sendSuccess(res, room, undefined, 201)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/join', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { code } = joinByCodeSchema.parse(req.body)
+            const room = await joinAuxRoomByCode(req.userId, code)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/join', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await joinAuxRoomById(req.userId, roomId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.get('/games/aux/rooms/:roomId', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await getRoomState(roomId, req.userId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/leave', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const result = await leaveAuxRoom(req.userId, roomId)
+            return sendSuccess(res, result)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/settings', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const input = updateRoomSettingsSchema.parse(req.body)
+            const room = await updateAuxRoomSettings(req.userId, roomId, input)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/start-submissions', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await startSubmissions(req.userId, roomId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/submit-song', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const input = submitSongSchema.parse(req.body)
+            const room = await submitSong(req.userId, roomId, input)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/bracket/create', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await createBracket(req.userId, roomId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/bracket/start', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await startBracket(req.userId, roomId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/matchups/:matchupId/start-a', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId, matchupId } = req.params as { roomId: string; matchupId: string }
+            const room = await startMatchupA(req.userId, roomId, matchupId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/matchups/:matchupId/start-b', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId, matchupId } = req.params as { roomId: string; matchupId: string }
+            const room = await startMatchupB(req.userId, roomId, matchupId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/matchups/:matchupId/start-voting', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId, matchupId } = req.params as { roomId: string; matchupId: string }
+            const room = await startVoting(req.userId, roomId, matchupId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/matchups/:matchupId/vote', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId, matchupId } = req.params as { roomId: string; matchupId: string }
+            const { submissionId } = voteSchema.parse(req.body)
+            const room = await castVote(req.userId, roomId, matchupId, submissionId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/matchups/:matchupId/reveal', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId, matchupId } = req.params as { roomId: string; matchupId: string }
+            const room = await revealMatchup(req.userId, roomId, matchupId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/play-again', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const room = await markPlayAgain(req.userId, roomId)
+            return sendSuccess(res, room)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
+    })
+
+    app.post('/games/aux/rooms/:roomId/rematch/create', { preHandler: app.authenticate }, async (req, res) => {
+        try {
+            const { roomId } = req.params as { roomId: string }
+            const result = await createRematch(req.userId, roomId)
+            return sendSuccess(res, result, undefined, 201)
+        } catch (err) {
+            return handleAuxError(res, err)
+        }
     })
 }
 

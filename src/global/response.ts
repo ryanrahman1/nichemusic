@@ -11,7 +11,8 @@ export function sendSuccess(
         result,
         error: null,
         metadata: {
-            apiVersion: "1",
+            apiVersion: "2",
+            recommendedAppVersion: "2.0.0",
             ...(metadata ?? {}),
         },
     })
@@ -34,7 +35,8 @@ export function sendError(
             ...(details !== undefined ? { details } : {}),
         },
         metadata: {
-            apiVersion: "1",
+            apiVersion: "2",
+            recommendedAppVersion: "2.0.0",
             ...(metadata ?? {}),
         },
     })

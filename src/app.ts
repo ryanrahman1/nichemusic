@@ -1,4 +1,6 @@
 // fastify
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import fastify from "fastify"
 import cors from "@fastify/cors"
 import cookie from "@fastify/cookie"
@@ -24,6 +26,7 @@ import messagesRoutes from "./modules/messages/routes.js"
 import moderationRoutes from "./modules/moderation/routes.js"
 import musicMatchesRoutes from "./modules/music-matches/routes.js"
 import realtimeRoutes from "./global/realtime/realtime.js"
+import auxRealtimeRoutes from "./modules/games/auxRealtime.js"
 import playlistsRoutes from "./modules/playlists/routes.js"
 import badgesRoutes from "./modules/badges/routes.js"
 import gamesRoutes from "./modules/games/routes.js"
@@ -92,9 +95,18 @@ app.register(messagesRoutes)
 app.register(moderationRoutes)
 app.register(musicMatchesRoutes)
 app.register(realtimeRoutes)
+app.register(auxRealtimeRoutes)
 app.register(playlistsRoutes)
 app.register(badgesRoutes)
 app.register(gamesRoutes)
+
+if (!isProd) {
+    app.get("/aux-test", async (_req, res) => {
+        const html = readFileSync(join(process.cwd(), "aux-test.html"), "utf8")
+        return res.type("text/html").send(html)
+    })
+}
+
 app.get("/health", (req, res) => {
     return sendSuccess(res, { healthy: true })
 })

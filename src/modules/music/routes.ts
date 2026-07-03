@@ -3,7 +3,7 @@ import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { supabase } from "../../config/supabase.js"
 import { getProfileByUsername, checkFollowing, upsertAlbum, upsertArtist, upsertTrack, syncAppleAlbumTracks, syncAppleArtistDiscography, getTrackViewerContext, getAlbumViewerContext, getArtistViewerContext, getTrackViewerContextMap, getAlbumViewerContextMap, getArtistViewerContextMap, getNicheTrackViewerContext, attachArtistNamesToTracks, fetchNicheReleaseDetail, fetchNicheTrackDetail } from "./helpers.js"
-import { musicLibraryQuerySchema, musicMeQuerySchema, musicFollowingQuerySchema, type Track, listCommentsQuerySchema, updateNicheTrackDraftSchema, updateReleaseDraftSchema, updateNicheTrackOnReleaseDraftSchema, updateNicheTrackSchema, updateReleaseSchema, draftMusicUploadSchema, listDraftsQuerySchema } from "./schemas.js"
+import { musicLibraryQuerySchema, musicMeQuerySchema, musicFollowingQuerySchema, type Track, listCommentsQuerySchema, updateNicheTrackDraftSchema, updateReleaseDraftSchema, updateNicheTrackOnReleaseDraftSchema, updateNicheTrackSchema, updateReleaseSchema, draftMusicUploadSchema, listDraftsQuerySchema, recordNicheTrackPlaySchema } from "./schemas.js"
 import { generateRandomId } from "../../lib/auth.js"
 import { addViewerToComments, buildCommentContent, decodeCommentCursor, encodeCommentCursor, getPostViewerContextMap, POST_LIST_SELECT } from "../posts/helpers.js"
 import { createCommentSchema, postListQuerySchema } from "../posts/schemas.js"
@@ -1017,6 +1017,62 @@ const nicheMusicRoutes: FastifyPluginAsync = async (app) => {
 
         if (unsave_error) return sendError(res, "MUSIC_SONG_UNSAVE_FAILED", unsave_error.message, 500)
         return sendSuccess(res, { message: "Song unsaved successfully", unsave_data: unsave_data })
+    })
+
+    app.post('/music/niche/songs/:id/play', { preHandler: app.authenticate }, async (req, res) => {
+        const { id } = req.params as { id: string }
+        const parsedBody = recordNicheTrackPlaySchema.parse(req.body ?? {})
+
+        const { data: track, error: trackError } = await supabase
+            .schema("public")
+            .from("niche_tracks")
+            .select("id, owner_id, duration_ms, deleted_at")
+            .eq("id", id)
+            .maybeSingle()
+
+        if (trackError) {
+            return sendError(res, "MUSIC_SONG_PLAY_FETCH_FAILED", trackError.message, 500)
+        }
+
+        if (!track || track.deleted_at) {
+            return sendError(res, "MUSIC_SONG_NOT_FOUND", "Song not found", 404)
+        }
+
+        if (track.owner_id === req.userId) {
+            return sendSuccess(res, { recorded: false, reason: "owner_play_excluded" })
+        }
+
+        const now = new Date().toISOString()
+        const durationMs = typeof track.duration_ms === "number" && track.duration_ms > 0 ? track.duration_ms : null
+        const percentPlayed =
+            parsedBody.percentPlayed ??
+            (durationMs ? Math.min(1, parsedBody.listenMs / durationMs) : null)
+
+        const { error: insertError } = await supabase
+            .schema("public")
+            .from("niche_track_play_events")
+            .insert({
+                id: generateRandomId(16),
+                track_id: id,
+                user_id: req.userId,
+                listen_ms: parsedBody.listenMs,
+                source: parsedBody.source ?? "ios",
+                platform: "ios",
+                app_version: parsedBody.appVersion ?? null,
+                context_type: parsedBody.contextType ?? null,
+                context_id: parsedBody.contextId ?? null,
+                percent_played: percentPlayed,
+                completed: parsedBody.completed ?? false,
+                started_at: now,
+                ended_at: now,
+                metadata: {},
+            })
+
+        if (insertError) {
+            return sendError(res, "MUSIC_SONG_PLAY_RECORD_FAILED", insertError.message, 500)
+        }
+
+        return sendSuccess(res, { recorded: true })
     })
 
     // comments

@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aux Battle — test</title>
+  <style>
+    :root {
+      --bg: #0a0a0c;
+      --surface: #141418;
+      --surface2: #1c1c22;
+      --border: #2a2a32;
+      --text: #f4f4f5;
+      --muted: #71717a;
+      --accent: #a855f7;
+      --accent-dim: #7c3aed;
+      --green: #22c55e;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+    }
+    .app { max-width: 520px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; }
+    header {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--surface);
+      position: sticky; top: 0; z-index: 10;
+    }
+    header .brand { font-weight: 700; font-size: 14px; letter-spacing: -.02em; }
+    header .meta { font-size: 12px; color: var(--muted); text-align: right; }
+    header .meta .live { color: var(--green); }
+    main { flex: 1; padding: 20px 16px 100px; }
+    .phase-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--surface2);
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+    .phase-badge.active { background: #3b076433; color: #c084fc; }
+    h2 { font-size: 22px; font-weight: 700; margin: 0 0 8px; line-height: 1.2; }
+    .sub { color: var(--muted); font-size: 14px; margin: 0 0 20px; line-height: 1.45; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .card h3 { margin: 0 0 12px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+    input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-size: 15px;
+      margin-bottom: 10px;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    input.code-input { font-size: 28px; font-weight: 700; letter-spacing: .2em; text-align: center; text-transform: uppercase; }
+    .btn {
+      display: block;
+      width: 100%;
+      border: none;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: opacity .15s;
+    }
+    .btn:disabled { opacity: .35; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-dim); }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost { background: transparent; color: var(--muted); font-weight: 500; font-size: 13px; padding: 8px; }
+    .btn-host { background: linear-gradient(135deg, #7c3aed, #a855f7); color: #fff; }
+    .link-row { text-align: center; margin-top: 8px; }
+    .link-row button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 14px; }
+    .players { display: flex; flex-direction: column; gap: 8px; }
+    .player {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 10px;
+    }
+    .avatar {
+      width: 40px; height: 40px; border-radius: 50%;
+      background: var(--surface2);
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+    .avatar.placeholder { display: flex; align-items: center; justify-content: center; font-size: 14px; color: var(--muted); }
+    .player-info { flex: 1; min-width: 0; }
+    .player-name { font-weight: 600; font-size: 14px; }
+    .player-sub { font-size: 12px; color: var(--muted); }
+    .badge {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      padding: 3px 7px; border-radius: 6px;
+      background: #3b076433; color: #c084fc;
+    }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .status-dot.waiting { background: var(--border); }
+    .status-dot.ready { background: var(--green); }
+    .prompt-box {
+      font-size: 20px;
+      font-weight: 700;
+      line-height: 1.35;
+      padding: 20px;
+      background: linear-gradient(135deg, #1a1025, #141418);
+      border: 1px solid #3b076455;
+      border-radius: 14px;
+      margin-bottom: 16px;
+    }
+    .room-code-display {
+      text-align: center;
+      padding: 20px;
+      background: var(--bg);
+      border-radius: 12px;
+      margin-bottom: 16px;
+    }
+    .room-code-display .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .room-code-display .code { font-size: 36px; font-weight: 800; letter-spacing: .15em; }
+    .matchup {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 10px;
+      align-items: stretch;
+    }
+    .song-card {
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      text-align: center;
+      transition: border-color .2s;
+    }
+    .song-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px #a855f733; }
+    .song-card.winner { border-color: var(--green); }
+    .song-card.loser { opacity: .45; }
+    .song-art { width: 72px; height: 72px; border-radius: 8px; object-fit: cover; margin: 0 auto 8px; background: var(--surface2); display: block; }
+    .song-art.empty { display: flex; align-items: center; justify-content: center; font-size: 24px; color: var(--muted); margin: 0 auto 8px; }
+    .song-title { font-size: 13px; font-weight: 600; line-height: 1.3; margin-bottom: 2px; }
+    .song-artist { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .song-player { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .btn-play {
+      width: auto;
+      display: inline-block;
+      margin: 0;
+      padding: 6px 12px;
+      font-size: 12px;
+      border-radius: 999px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .btn-play:hover { border-color: var(--accent); color: #fff; }
+    .vs { display: flex; align-items: center; font-weight: 800; color: var(--muted); font-size: 13px; }
+    .bracket-list { display: flex; flex-direction: column; gap: 6px; }
+    .bracket-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .bracket-row.current { outline: 1px solid var(--accent); }
+    .bracket-row.done { opacity: .6; }
+    .vote-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .toast {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: #27272a; border: 1px solid var(--border);
+      padding: 10px 16px; border-radius: 999px; font-size: 13px;
+      max-width: calc(100% - 32px); z-index: 100;
+      opacity: 0; pointer-events: none; transition: opacity .2s;
+    }
+    .toast.show { opacity: 1; }
+    .log-panel {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      max-width: 520px; margin: 0 auto;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      z-index: 20;
+    }
+    .log-toggle {
+      width: 100%; padding: 10px 16px;
+      background: none; border: none; color: var(--muted);
+      font-size: 12px; cursor: pointer; text-align: left;
+      display: flex; justify-content: space-between;
+    }
+    .log-body {
+      max-height: 0; overflow: hidden; transition: max-height .2s;
+      font-family: ui-monospace, monospace; font-size: 11px;
+    }
+    .log-panel.open .log-body { max-height: 180px; overflow-y: auto; padding: 0 12px 12px; }
+    .log-line { padding: 3px 0; border-bottom: 1px solid #ffffff08; color: var(--muted); }
+    .log-line.err { color: var(--red); }
+    .log-line.ws { color: #c084fc; }
+    .log-line.ok { color: var(--green); }
+    .hidden { display: none !important; }
+    .dev-toggle { font-size: 11px; color: var(--muted); cursor: pointer; text-decoration: underline; margin-top: 12px; display: inline-block; }
+    .dev-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .winner-banner {
+      text-align: center; padding: 24px 16px;
+      background: linear-gradient(135deg, #052e1622, #141418);
+      border: 1px solid #22c55e44;
+      border-radius: 14px;
+    }
+    .winner-banner h2 { color: var(--green); margin-bottom: 4px; }
+    .countdown { text-align: center; font-size: 48px; font-weight: 800; color: var(--accent); margin: 12px 0; }
+    .host-label { font-size: 11px; color: #c084fc; text-align: center; margin-bottom: 8px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">aux battle · test</div>
+      <div class="meta">
+        <div id="headerUser">not signed in</div>
+        <div id="headerWs" class="">offline</div>
+      </div>
+    </header>
+
+    <main id="screen"></main>
+
+    <div class="log-panel" id="logPanel">
+      <button class="log-toggle" id="logToggle">event log <span id="logCount">0</span></button>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const app = {
+      userId: null,
+      userEmail: null,
+      room: null,
+      ws: null,
+      wsJoined: false,
+      logCount: 0,
+      countdown: null,
+      playingSide: null,
+      refreshPending: null,
+      refreshQueued: false,
+      draftNicheTrackId: "",
+      draftAppleTrackId: "",
+      countdownEndsAt: null,
+      countdownSubId: null,
+      countdownDurationMs: null,
+      countdownTick: null,
+      countdownPlayTimeout: null,
+    }
+
+    const $ = (id) => document.getElementById(id)
+
+    const PHASE_LABELS = {
+      auth: "sign in",
+      home: "home",
+      lobby: "lobby",
+      submitting: "pick your song",
+      bracket: "bracket",
+      matchup: "matchup",
+      voting: "vote",
+      finished: "game over",
+    }
+
+    function toast(msg) {
+      const el = $("toast")
+      el.textContent = msg
+      el.classList.add("show")
+      setTimeout(() => el.classList.remove("show"), 2800)
+    }
+
+    function log(kind, msg) {
+      app.logCount++
+      $("logCount").textContent = app.logCount
+      const line = document.createElement("div")
+      line.className = "log-line " + (kind === "ERR" ? "err" : kind === "WS" ? "ws" : kind === "OK" ? "ok" : "")
+      line.textContent = `[${new Date().toISOString().slice(11, 19)}] ${kind} ${msg}`
+      $("logBody").appendChild(line)
+      $("logBody").scrollTop = $("logBody").scrollHeight
+    }
+
+    async function api(method, path, body) {
+      const opts = { method, credentials: "include", headers: {} }
+      if (body !== undefined) {
+        opts.headers["Content-Type"] = "application/json"
+        opts.body = JSON.stringify(body)
+      }
+      const res = await fetch(window.location.origin + path, opts)
+      let json
+      try { json = await res.json() } catch { json = {} }
+      if (!res.ok || json.success === false) {
+        const code = json?.error?.code || json?.message || res.status
+        log("ERR", `${method} ${path} → ${code}`)
+        toast(json?.error?.message || code)
+        throw json
+      }
+      log("OK", `${method} ${path}`)
+      return json.result ?? json
+    }
+
+    function isHost() {
+      return app.room && app.userId && app.room.room.hostId === app.userId
+    }
+
+    function currentMatchup() {
+      if (!app.room) return null
+      return app.room.currentMatchup ||
+        app.room.bracket?.matchups?.find((m) => m.id === app.room.room.currentMatchupId) ||
+        null
+    }
+
+    function nextPendingMatchup() {
+      if (!app.room?.bracket?.matchups) return null
+      return app.room.bracket.matchups.find(
+        (m) => m.status === "pending" && m.submissionA && m.submissionB
+      ) || null
+    }
+
+    function phase() {
+      if (!app.userId) return "auth"
+      if (!app.room) return "home"
+      const s = app.room.room.status
+      if (s === "lobby") return "lobby"
+      if (s === "submitting") return "submitting"
+      if (s === "finished") return "finished"
+      if (s === "voting") return "voting"
+
+      const m = currentMatchup()
+      if (m?.status === "voting") return "voting"
+      if (m && m.status !== "finished" && (s === "matchup_playing" || m.status !== "pending" || app.room.room.currentMatchupId)) {
+        return "matchup"
+      }
+
+      if (s === "matchup_playing") return "matchup"
+      if (s === "bracket") return "bracket"
+      return "home"
+    }
+
+    function avatarHtml(profile, letter) {
+      if (profile?.avatar_url) {
+        return `<img class="avatar" src="${profile.avatar_url}" alt="" />`
+      }
+      return `<div class="avatar placeholder">${letter || "?"}</div>`
+    }
+
+    function songCard(sub, player, opts = {}) {
+      if (!sub || sub.lockedIn) {
+        return `<div class="song-card ${opts.class || ""}">
+          <div class="song-art empty">?</div>
+          <div class="song-title">locked in</div>
+          <div class="song-artist">${player?.profile?.username || "player"}</div>
+        </div>`
+      }
+      const art = sub.artworkUrl
+        ? `<img class="song-art" src="${sub.artworkUrl}" alt="" />`
+        : `<div class="song-art empty">♪</div>`
+      const playBtn = sub.musicUrl
+        ? `<button type="button" class="btn-play" data-play-sub="${sub.id}">▶ play</button>`
+        : `<span class="song-player">no audio url</span>`
+      return `<div class="song-card ${opts.class || ""}" data-sub-id="${sub.id}">
+        ${art}
+        <div class="song-title">${esc(sub.trackName)}</div>
+        <div class="song-artist">${esc(sub.artistName)}</div>
+        <div class="song-player">${player?.profile?.username || ""}</div>
+        ${playBtn}
+        ${sub.musicUrl ? `<audio id="audio-${sub.id}" src="${sub.musicUrl}" preload="auto"></audio>` : ""}
+      </div>`
+    }
+
+    function wsStatusLabel() {
+      if (!app.ws) return { text: "offline", live: false }
+      if (app.ws.readyState === WebSocket.CONNECTING) return { text: "connecting…", live: false }
+      if (app.ws.readyState === WebSocket.OPEN) {
+        return { text: app.wsJoined ? "live" : "joining…", live: app.wsJoined }
+      }
+      return { text: "offline", live: false }
+    }
+
+    function esc(s) {
+      return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
+    }
+
+    function syncCurrentMatchupRef() {
+      if (!app.room) return
+      const id = app.room.room.currentMatchupId
+      if (!id) {
+        app.room.currentMatchup = null
+        return
+      }
+      const fromBracket = app.room.bracket?.matchups?.find((m) => m.id === id)
+      if (fromBracket) {
+        app.room.currentMatchup = fromBracket
+      }
+    }
+
+    function mergeMatchup(partial) {
+      if (!partial?.id) return
+      if (!app.room.bracket) app.room.bracket = { matchups: [] }
+      const idx = app.room.bracket.matchups.findIndex((m) => m.id === partial.id)
+      if (idx >= 0) {
+        app.room.bracket.matchups[idx] = { ...app.room.bracket.matchups[idx], ...partial }
+      } else {
+        app.room.bracket.matchups.push(partial)
+      }
+      syncCurrentMatchupRef()
+    }
+
+    function applyRoomSync(data) {
+      if (!app.room) return false
+      if (data.roomId && data.roomId !== app.room.room.id) return false
+
+      let changed = false
+
+      if (data.status) {
+        app.room.room.status = data.status
+        changed = true
+      }
+
+      if (data.currentMatchupId !== undefined) {
+        app.room.room.currentMatchupId = data.currentMatchupId
+        changed = true
+      }
+
+      if (Array.isArray(data.players)) {
+        for (const incoming of data.players) {
+          const existing = app.room.players.find((p) => p.userId === incoming.userId)
+          if (existing) {
+            if (incoming.submission == null && existing.submission) {
+              incoming.submission = existing.submission
+            } else if (incoming.submission && existing.submission) {
+              incoming.submission = { ...existing.submission, ...incoming.submission }
+            }
+            Object.assign(existing, incoming)
+          } else {
+            app.room.players.push(incoming)
+          }
+        }
+        changed = true
+      }
+
+      if (data.meta || data.playerCount != null) {
+        app.room.meta = {
+          ...(app.room.meta || {}),
+          ...(data.meta || {}),
+          playerCount: data.playerCount ?? data.meta?.playerCount ?? app.room.meta?.playerCount,
+        }
+        changed = true
+      }
+
+      if (data.allLocked != null) {
+        app.room.meta = { ...(app.room.meta || {}), allSubmitted: data.allLocked }
+        changed = true
+      }
+
+      if (data.allVoted != null) {
+        app.room.meta = { ...(app.room.meta || {}), allVoted: data.allVoted }
+        changed = true
+      }
+
+      if (data.type === "aux.submission.locked" && data.userId) {
+        const player = app.room.players.find((p) => p.userId === data.userId)
+        if (player) {
+          player.hasSubmitted = true
+          changed = true
+        }
+      }
+
+      if (Array.isArray(data.submissions)) {
+        app.room.submissions = data.submissions
+        changed = true
+      }
+
+      if (data.matchup) {
+        mergeMatchup(data.matchup)
+        changed = true
+      } else if (data.matchupId && (data.submissionA || data.submissionB)) {
+        const existing = app.room.bracket?.matchups?.find((m) => m.id === data.matchupId) || {}
+        mergeMatchup({
+          ...existing,
+          id: data.matchupId,
+          status: data.matchup?.status || existing.status || "pending",
+          submissionA: data.submissionA ?? existing.submissionA,
+          submissionB: data.submissionB ?? existing.submissionB,
+        })
+        changed = true
+      }
+
+      if (data.type === "aux.matchup.reveal" && data.matchupId) {
+        mergeMatchup({
+          id: data.matchupId,
+          status: "finished",
+          winnerSubmissionId: data.winnerSubmissionId,
+          voteCounts: data.voteCounts,
+        })
+        if (data.isFinal) {
+          app.room.room.currentMatchupId = null
+          app.room.currentMatchup = null
+        }
+        changed = true
+      }
+
+      if (data.type === "aux.matchup.play_a" && data.matchupId) {
+        mergeMatchup({
+          id: data.matchupId,
+          status: "playing_a",
+          submissionA: data.submissionA,
+          submissionB: data.submissionB,
+        })
+        changed = true
+      }
+
+      if (data.type === "aux.matchup.play_b" && data.matchupId) {
+        mergeMatchup({
+          id: data.matchupId,
+          status: "playing_b",
+          submissionA: data.submissionA,
+          submissionB: data.submissionB,
+        })
+        changed = true
+      }
+
+      if (data.type === "aux.matchup.voting" && data.matchupId) {
+        mergeMatchup({
+          id: data.matchupId,
+          status: "voting",
+          submissionA: data.submissionA,
+          submissionB: data.submissionB,
+        })
+        changed = true
+      }
+
+      if (data.type === "aux.play_again" && data.count != null) {
+        app.room.playAgain = { ...(app.room.playAgain || {}), count: data.count }
+        changed = true
+      }
+
+      if (changed) {
+        syncCurrentMatchupRef()
+        renderScreen()
+      }
+
+      return changed
+    }
+
+    function preserveDrafts() {
+      const niche = document.getElementById("nicheTrackId")
+      const apple = document.getElementById("appleTrackId")
+      if (niche) app.draftNicheTrackId = niche.value
+      if (apple) app.draftAppleTrackId = apple.value
+    }
+
+    function restoreDrafts() {
+      const niche = document.getElementById("nicheTrackId")
+      const apple = document.getElementById("appleTrackId")
+      if (niche && app.draftNicheTrackId) niche.value = app.draftNicheTrackId
+      if (apple && app.draftAppleTrackId) apple.value = app.draftAppleTrackId
+    }
+
+    function renderReloadButton() {
+      if (!app.room?.room?.id) return ""
+      return `<button class="btn btn-ghost" data-action="refresh">reload</button>`
+    }
+
+    function renderPlayers(showLockStatus) {
+      const players = app.room?.players || []
+      return players.map((p) => {
+        const name = p.profile?.display_name || p.profile?.username || p.userId.slice(0, 8)
+        const letter = (name[0] || "?").toUpperCase()
+        let sub = "in lobby"
+        if (showLockStatus) {
+          sub = p.hasSubmitted ? "✓ locked in" : "choosing…"
+        }
+        return `<div class="player">
+          ${avatarHtml(p.profile, letter)}
+          <div class="player-info">
+            <div class="player-name">${esc(name)}</div>
+            <div class="player-sub">${sub}</div>
+          </div>
+          ${p.isHost ? '<span class="badge">host</span>' : ""}
+          ${showLockStatus ? `<span class="status-dot ${p.hasSubmitted ? "ready" : "waiting"}"></span>` : ""}
+        </div>`
+      }).join("")
+    }
+
+    function renderBracket() {
+      const matchups = app.room.bracket?.matchups || []
+      return matchups.map((m) => {
+        const a = m.submissionA?.trackName || "—"
+        const b = m.submissionB?.trackName || "—"
+        const isCurrent = m.id === app.room.room.currentMatchupId || (m.status === "pending" && !app.room.room.currentMatchupId)
+        const done = m.status === "finished"
+        let status = m.status
+        if (done && m.winnerSubmissionId) status = "done"
+        return `<div class="bracket-row ${isCurrent && !done ? "current" : ""} ${done ? "done" : ""}">
+          <span>R${m.roundNumber} · ${esc(a)} vs ${esc(b)}</span>
+          <span style="color:var(--muted);font-size:11px">${status}</span>
+        </div>`
+      }).join("")
+    }
+
+    function renderHostButton(label, action, disabled) {
+      if (!isHost()) return ""
+      return `<div class="host-label">host controls</div>
+        <button class="btn btn-host" data-action="${action}" ${disabled ? "disabled" : ""}>${label}</button>`
+    }
+
+    function renderScreen() {
+      preserveDrafts()
+      const p = phase()
+      const host = isHost()
+      $("headerUser").textContent = app.userEmail || (app.userId ? app.userId.slice(0, 8) : "not signed in")
+      const ws = wsStatusLabel()
+      $("headerWs").textContent = ws.text
+      $("headerWs").className = ws.live ? "live" : ""
+
+      let html = `<div class="phase-badge ${app.room ? "active" : ""}">${PHASE_LABELS[p] || p}</div>`
+
+      // auth
+      if (p === "auth") {
+        html += `
+          <h2>sign in</h2>
+          <p class="sub">use two windows (one incognito) with different accounts to test host + guest.</p>
+          <div class="card">
+            <input id="email" type="email" placeholder="email" />
+            <input id="password" type="password" placeholder="password" />
+            <button class="btn btn-primary" data-action="login">sign in</button>
+          </div>
+          <span class="dev-toggle" data-action="toggleDev">dev: session token</span>
+          <div id="devPanel" class="dev-panel hidden">
+            <input id="sessionToken" placeholder="paste session token" />
+            <button class="btn btn-secondary" data-action="exchange">exchange token</button>
+          </div>`
+      }
+
+      // home
+      if (p === "home") {
+        html += `
+          <h2>aux battle</h2>
+          <p class="sub">host a game or join with a code.</p>
+          <div class="card">
+            <h3>host</h3>
+            <input id="prompt" placeholder="prompt — e.g. song for a rainy night" value="song for a rainy night drive" />
+            <button class="btn btn-primary" data-action="create">create game</button>
+          </div>
+          <div class="card">
+            <h3>join</h3>
+            <input id="joinCode" class="code-input" placeholder="CODE" maxlength="6" />
+            <button class="btn btn-secondary" data-action="join">join room</button>
+          </div>
+          <button class="btn btn-ghost" data-action="logout">sign out</button>`
+      }
+
+      // lobby
+      if (p === "lobby") {
+        html += `
+          <div class="room-code-display">
+            <div class="label">share this code</div>
+            <div class="code">${esc(app.room.room.code)}</div>
+          </div>
+          <div class="card">
+            <h3>players (${app.room.meta.playerCount}/${app.room.room.maxPlayers})</h3>
+            <div class="players">${renderPlayers(false)}</div>
+          </div>
+          ${renderHostButton("start game", "startSubmissions", app.room.meta.playerCount < 2)}
+          ${!host ? `<p class="sub" style="text-align:center">waiting for host to start…</p>` : ""}
+          ${renderReloadButton()}
+          <button class="btn btn-ghost" data-action="leave">leave room</button>`
+      }
+
+      // submitting
+      if (p === "submitting") {
+        const me = app.room.players.find((pl) => pl.userId === app.userId)
+        const mySubmitted = me?.hasSubmitted
+        html += `
+          <div class="prompt-box">${esc(app.room.room.prompt)}</div>
+          <div class="card">
+            <h3>players</h3>
+            <div class="players">${renderPlayers(true)}</div>
+          </div>`
+        if (!mySubmitted) {
+          html += `
+          <div class="card">
+            <h3>your pick</h3>
+            <input id="nicheTrackId" placeholder="niche track id" />
+            <input id="appleTrackId" placeholder="or apple track id" />
+            <button class="btn btn-primary" data-action="submit">lock in song</button>
+          </div>`
+        } else {
+          const me = app.room.players.find((pl) => pl.userId === app.userId)
+          html += `
+          <div class="card">
+            <h3>your pick</h3>
+            ${me?.submission ? songCard(me.submission, me) : `<p class="sub">locked in ✓</p>`}
+          </div>`
+        }
+        html += renderHostButton(
+          "create bracket",
+          "createBracket",
+          !app.room.meta.allSubmitted
+        )
+        if (!host && app.room.meta.allSubmitted) {
+          html += `<p class="sub" style="text-align:center">everyone locked in — waiting for host…</p>`
+        }
+        html += renderReloadButton()
+      }
+
+      // bracket
+      if (p === "bracket") {
+        html += `
+          <h2>bracket</h2>
+          <p class="sub">${esc(app.room.room.prompt)}</p>
+          <div class="card">
+            <div class="bracket-list">${renderBracket()}</div>
+          </div>
+          ${renderHostButton(nextPendingMatchup() ? "start next matchup" : "start bracket", "startBracket", !nextPendingMatchup())}
+          ${!host ? `<p class="sub" style="text-align:center">waiting for host…</p>` : ""}
+          ${renderReloadButton()}`
+      }
+
+      // matchup (playing_a / playing_b)
+      if (p === "matchup") {
+        const m = currentMatchup() || nextPendingMatchup()
+        if (m) {
+          const pa = app.room.players.find((pl) => pl.userId === m.submissionA?.userId)
+          const pb = app.room.players.find((pl) => pl.userId === m.submissionB?.userId)
+          const st = m.status
+          html += `
+            <h2>matchup</h2>
+            <div class="matchup">
+              ${songCard(m.submissionA, pa, { class: st === "playing_a" || app.playingSide === "a" ? "active" : "" })}
+              <div class="vs">vs</div>
+              ${songCard(m.submissionB, pb, { class: st === "playing_b" || app.playingSide === "b" ? "active" : "" })}
+            </div>
+            <div id="countdownBox" class="countdown hidden"></div>
+            <p class="sub" style="text-align:center">${statusLabel(st)}</p>`
+
+          if (st === "pending") {
+            html += renderHostButton("play song a", "startA", false)
+          } else if (st === "playing_a") {
+            html += renderHostButton("play song b", "startB", false)
+          } else if (st === "playing_b") {
+            html += renderHostButton("start voting", "startVoting", false)
+          }
+          html += renderReloadButton()
+        }
+      }
+
+      // voting
+      if (p === "voting") {
+        const m = currentMatchup()
+        if (m) {
+          const pa = app.room.players.find((pl) => pl.userId === m.submissionA?.userId)
+          const pb = app.room.players.find((pl) => pl.userId === m.submissionB?.userId)
+          const myVote = m.myVote
+          html += `
+            <h2>vote</h2>
+            <p class="sub">pick the song that fits the prompt best.</p>
+            <div class="matchup">
+              ${songCard(m.submissionA, pa, { class: myVote === m.submissionA?.id ? "active" : "" })}
+              <div class="vs">vs</div>
+              ${songCard(m.submissionB, pb, { class: myVote === m.submissionB?.id ? "active" : "" })}
+            </div>`
+          if (!myVote && m.submissionA && m.submissionB) {
+            html += `<div class="vote-row">
+              <button class="btn btn-secondary" data-action="voteA">vote left</button>
+              <button class="btn btn-secondary" data-action="voteB">vote right</button>
+            </div>`
+          } else if (myVote) {
+            html += `<p class="sub" style="text-align:center;color:var(--green)">vote submitted ✓</p>`
+          }
+          html += renderHostButton("reveal results", "reveal", false)
+          if (!host) {
+            html += `<p class="sub" style="text-align:center">waiting for host to reveal…</p>`
+          }
+          html += renderReloadButton()
+        }
+      }
+
+      // finished
+      if (p === "finished") {
+        const winnerM = app.room.bracket?.matchups?.find((m) => !m.nextMatchupId && m.winnerSubmissionId)
+        const winSub = winnerM?.submissionA?.id === winnerM?.winnerSubmissionId
+          ? winnerM.submissionA : winnerM?.submissionB
+        html += `
+          <div class="winner-banner">
+            <h2>winner</h2>
+            <p style="font-size:18px;font-weight:600;margin:0">${winSub ? esc(winSub.trackName) + " — " + esc(winSub.artistName) : "—"}</p>
+          </div>
+          <div class="card">
+            <h3>final bracket</h3>
+            <div class="bracket-list">${renderBracket()}</div>
+          </div>
+          <button class="btn btn-primary" data-action="playAgain">play again</button>
+          ${renderHostButton("start rematch", "rematch", false)}
+          ${app.room.playAgain?.count ? `<p class="sub" style="text-align:center">${app.room.playAgain.count} ready for rematch</p>` : ""}
+          ${renderReloadButton()}`
+      }
+
+      $("screen").innerHTML = html
+      bindActions()
+      restoreDrafts()
+      updateCountdownUI()
+    }
+
+    function statusLabel(st) {
+      if (st === "pending") return "ready to play song a"
+      if (st === "playing_a") return "now playing — song a"
+      if (st === "playing_b") return "now playing — song b"
+      if (st === "voting") return "voting open"
+      if (st === "finished") return "matchup finished"
+      return st
+    }
+
+    function bindActions() {
+      $("screen").querySelectorAll("[data-action]").forEach((el) => {
+        el.onclick = () => handleAction(el.dataset.action)
+      })
+      $("screen").querySelectorAll("[data-play-sub]").forEach((el) => {
+        el.onclick = () => playSubmissionById(el.dataset.playSub)
+      })
+    }
+
+    function findSubmissionById(subId) {
+      if (!app.room || !subId) return null
+      const fromMatchup = app.room.currentMatchup
+      if (fromMatchup?.submissionA?.id === subId) return fromMatchup.submissionA
+      if (fromMatchup?.submissionB?.id === subId) return fromMatchup.submissionB
+      for (const m of app.room.bracket?.matchups || []) {
+        if (m.submissionA?.id === subId) return m.submissionA
+        if (m.submissionB?.id === subId) return m.submissionB
+      }
+      for (const p of app.room.players || []) {
+        if (p.submission?.id === subId) return p.submission
+      }
+      for (const s of app.room.submissions || []) {
+        if (s.id === subId) return s
+      }
+      return null
+    }
+
+    function playSubmissionById(subId, durationMs) {
+      const sub = findSubmissionById(subId)
+      if (!sub?.musicUrl) {
+        toast("no audio for this song")
+        return
+      }
+      let audio = document.getElementById(`audio-${sub.id}`)
+      if (!audio) {
+        audio = document.createElement("audio")
+        audio.id = `audio-${sub.id}`
+        audio.src = sub.musicUrl
+        audio.preload = "auto"
+        document.body.appendChild(audio)
+      }
+      const ms = durationMs || sub.snippetDurationMs || app.room?.room?.snippetLengthSeconds * 1000 || 15000
+      audio.currentTime = (sub.snippetStartMs || 0) / 1000
+      audio.play().catch(() => toast("playback blocked — click play again"))
+      setTimeout(() => audio.pause(), ms)
+      toast(`playing ${sub.trackName}`)
+    }
+
+    async function handleAction(action) {
+      try {
+        switch (action) {
+          case "toggleDev":
+            $("devPanel")?.classList.toggle("hidden")
+            return
+          case "login":
+            await api("POST", "/login/email", {
+              email: $("email").value.trim(),
+              password: $("password").value,
+            })
+            await loadSession()
+            return
+          case "exchange":
+            await api("POST", "/session/exchange", { sessionToken: $("sessionToken").value.trim() })
+            await loadSession()
+            return
+          case "logout":
+            await api("POST", "/logout")
+            app.userId = null
+            app.userEmail = null
+            app.room = null
+            disconnectWs()
+            renderScreen()
+            return
+          case "create":
+            app.room = await api("POST", "/games/aux/rooms/create", {
+              prompt: $("prompt").value.trim(),
+              maxPlayers: 8,
+              snippetLengthSeconds: 15,
+              songSource: "any",
+            })
+            connectWs()
+            renderScreen()
+            return
+          case "join":
+            app.room = await api("POST", "/games/aux/rooms/join", {
+              code: $("joinCode").value.trim().toUpperCase(),
+            })
+            connectWs()
+            renderScreen()
+            return
+          case "leave":
+            await api("POST", `/games/aux/rooms/${app.room.room.id}/leave`)
+            app.room = null
+            disconnectWs()
+            renderScreen()
+            return
+          case "refresh":
+            await refreshRoom({ manual: true })
+            return
+          case "startSubmissions":
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/start-submissions`)
+            renderScreen()
+            return
+          case "submit": {
+            const nicheId = $("nicheTrackId")?.value.trim()
+            const appleId = $("appleTrackId")?.value.trim()
+            const source = nicheId ? "niche" : appleId ? "apple" : null
+            if (!source) return toast("enter a track id")
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/submit-song`, {
+              source,
+              nicheTrackId: nicheId || undefined,
+              trackId: appleId || undefined,
+              snippetStartMs: 0,
+            })
+            renderScreen()
+            return
+          }
+          case "createBracket":
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/bracket/create`)
+            renderScreen()
+            return
+          case "startBracket":
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/bracket/start`)
+            renderScreen()
+            return
+          case "startA":
+            await doMatchupAction("start-a")
+            return
+          case "startB":
+            await doMatchupAction("start-b")
+            return
+          case "startVoting":
+            await doMatchupAction("start-voting")
+            return
+          case "reveal":
+            await doMatchupAction("reveal")
+            return
+          case "voteA": {
+            const m = currentMatchup()
+            if (!m?.submissionA?.id) return
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/matchups/${m.id}/vote`, {
+              submissionId: m.submissionA.id,
+            })
+            renderScreen()
+            return
+          }
+          case "voteB": {
+            const m = currentMatchup()
+            if (!m?.submissionB?.id) return
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/matchups/${m.id}/vote`, {
+              submissionId: m.submissionB.id,
+            })
+            renderScreen()
+            return
+          }
+          case "playAgain":
+            app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/play-again`)
+            if (app.room.rematch) {
+              toast("joined rematch lobby")
+              connectWs()
+            }
+            renderScreen()
+            return
+          case "rematch": {
+            const res = await api("POST", `/games/aux/rooms/${app.room.room.id}/rematch/create`)
+            app.room = res.room ?? res
+            connectWs()
+            renderScreen()
+            return
+          }
+        }
+      } catch {}
+    }
+
+    async function doMatchupAction(step) {
+      const m = currentMatchup() || nextPendingMatchup()
+      if (!m) return toast("no active matchup")
+      app.room = await api("POST", `/games/aux/rooms/${app.room.room.id}/matchups/${m.id}/${step}`)
+      // start-a/b countdown + UI come from the WS event — rendering here would wipe the timer
+      if (step !== "start-a" && step !== "start-b") {
+        renderScreen()
+      }
+    }
+
+    async function loadSession() {
+      try {
+        const s = await api("GET", "/session")
+        app.userId = s.user.id
+        app.userEmail = s.user.email
+        renderScreen()
+      } catch {
+        app.userId = null
+        renderScreen()
+      }
+    }
+
+    async function refreshRoom(opts = {}) {
+      if (!app.room?.room?.id) return
+      if (app.refreshPending) {
+        if (opts.manual) app.refreshQueued = true
+        return app.refreshPending
+      }
+      app.refreshPending = (async () => {
+        try {
+          app.room = await api("GET", `/games/aux/rooms/${app.room.room.id}`)
+          renderScreen()
+          if (opts.manual) toast("reloaded")
+        } catch (err) {
+          log("ERR", "refreshRoom failed")
+        } finally {
+          app.refreshPending = null
+          if (app.refreshQueued) {
+            app.refreshQueued = false
+            refreshRoom(opts).catch(() => {})
+          }
+        }
+      })()
+      return app.refreshPending
+    }
+
+    function wsUrl() {
+      const u = new URL(window.location.origin)
+      u.protocol = u.protocol === "https:" ? "wss:" : "ws:"
+      u.pathname = "/ws/aux"
+      return u.toString()
+    }
+
+    function connectWs() {
+      if (!app.room?.room?.id) return
+      disconnectWs()
+      app.ws = new WebSocket(wsUrl())
+      app.ws.onopen = () => {
+        app.wsJoined = false
+        app.ws.send(JSON.stringify({ type: "join", roomId: app.room.room.id }))
+        renderScreen()
+        log("WS", "connected")
+      }
+      app.ws.onclose = () => {
+        app.wsJoined = false
+        renderScreen()
+      }
+      app.ws.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data)
+          handleWs(data)
+        } catch (err) {
+          log("ERR", "ws parse failed")
+        }
+      }
+    }
+
+    function disconnectWs() {
+      if (app.ws) app.ws.close()
+      app.ws = null
+      app.wsJoined = false
+      clearCountdown()
+    }
+
+    async function handleWs(data) {
+      const t = data.type || ""
+      log("WS", t)
+
+      if (t === "pong") return
+
+      if (t === "aux.joined") {
+        app.wsJoined = true
+        applyRoomSync(data)
+        renderScreen()
+        return
+      }
+
+      if (t === "aux.error") {
+        if (data.code === "NOT_IN_ROOM" && app.room?.room?.id && app.ws?.readyState === WebSocket.OPEN) {
+          app.ws.send(JSON.stringify({ type: "join", roomId: app.room.room.id }))
+          return
+        }
+        app.wsJoined = false
+        toast(data.code || "ws error")
+        renderScreen()
+        return
+      }
+
+      if (t === "aux.player.joined" || t === "aux.player.left") {
+        if (data.cancelled) {
+          toast("room cancelled")
+          app.room = null
+          disconnectWs()
+          renderScreen()
+          return
+        }
+        if (!applyRoomSync(data)) await refreshRoom()
+        return
+      }
+
+      const applied = applyRoomSync(data)
+
+      // bracket structure isn't in the WS payload — one fetch when it's created
+      if (t === "aux.bracket.created") {
+        await refreshRoom()
+        return
+      }
+
+      if (t === "aux.matchup.play_a") {
+        app.playingSide = "a"
+        playSnippet(data.submission || data.submissionA, data.countdownEndsAt, data.snippetDurationMs)
+        return
+      }
+
+      if (t === "aux.matchup.play_b") {
+        app.playingSide = "b"
+        playSnippet(data.submission || data.submissionB, data.countdownEndsAt, data.snippetDurationMs)
+        return
+      }
+
+      if (t === "aux.matchup.reveal") {
+        app.playingSide = null
+        toast(`winner: ${data.winner?.trackName || "?"}`)
+        return
+      }
+
+      if (t === "aux.game.finished") {
+        app.playingSide = null
+        return
+      }
+
+      if (t === "aux.rematch" || t === "aux.rematch.joined") {
+        if (data.newRoomId) {
+          try {
+            app.room = await api("GET", `/games/aux/rooms/${data.newRoomId}`)
+            connectWs()
+            renderScreen()
+            toast("moved to rematch lobby")
+          } catch {
+            await refreshRoom()
+          }
+        }
+        return
+      }
+
+      if (!applied) {
+        log("WS", `${t} — no local patch applied`)
+      }
+    }
+
+    function clearCountdown() {
+      if (app.countdownTick) {
+        clearInterval(app.countdownTick)
+        app.countdownTick = null
+      }
+      if (app.countdownPlayTimeout) {
+        clearTimeout(app.countdownPlayTimeout)
+        app.countdownPlayTimeout = null
+      }
+      app.countdownEndsAt = null
+      app.countdownSubId = null
+      app.countdownDurationMs = null
+    }
+
+    function updateCountdownUI() {
+      const box = $("countdownBox")
+      if (!box) return
+
+      if (!app.countdownEndsAt) {
+        box.classList.add("hidden")
+        return
+      }
+
+      const left = Math.ceil((app.countdownEndsAt - Date.now()) / 1000)
+      if (left <= 0) {
+        box.classList.add("hidden")
+        return
+      }
+
+      box.classList.remove("hidden")
+      box.textContent = left
+    }
+
+    function playSnippet(sub, countdownEndsAt, durationMs) {
+      if (!sub?.id) return
+      clearCountdown()
+
+      const endsAt = countdownEndsAt ? new Date(countdownEndsAt).getTime() : Date.now() + 3000
+      const wait = Math.max(0, endsAt - Date.now())
+
+      app.countdownEndsAt = endsAt
+      app.countdownSubId = sub.id
+      app.countdownDurationMs = durationMs
+
+      updateCountdownUI()
+      app.countdownTick = setInterval(updateCountdownUI, 200)
+
+      app.countdownPlayTimeout = setTimeout(() => {
+        clearCountdown()
+        updateCountdownUI()
+        playSubmissionById(sub.id, durationMs)
+      }, wait)
+    }
+
+    $("logToggle").onclick = () => $("logPanel").classList.toggle("open")
+
+    loadSession()
+  </script>
+</body>
+</html>
