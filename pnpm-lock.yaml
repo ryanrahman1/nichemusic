@@ -35,6 +35,15 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.99.1
         version: 2.99.1
+      '@types/node':
+        specifier: ^25.4.0
+        version: 25.4.0
+      '@types/pg':
+        specifier: ^8.18.0
+        version: 8.18.0
+      '@types/react':
+        specifier: ^19.2.17
+        version: 19.2.17
       argon2:
         specifier: ^0.44.0
         version: 0.44.0
@@ -69,15 +78,6 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
-      '@types/node':
-        specifier: ^25.4.0
-        version: 25.4.0
-      '@types/pg':
-        specifier: ^8.18.0
-        version: 8.18.0
-      '@types/react':
-        specifier: ^19.2.17
-        version: 19.2.17
       tsx:
         specifier: ^4.21.0
         version: 4.21.0

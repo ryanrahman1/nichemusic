@@ -1,1 +1,1 @@
-web: sh -c "pnpm run build && pnpm run start"
+web: pnpm start
