@@ -8,6 +8,11 @@ import env from "../../config/env.js"
 import { sendError, sendSuccess } from "../../global/response.js"
 import { sendEmailVerificationCode, sendResetPasswordEmail } from "../../lib/email.js"
 import crypto from "crypto"
+import {
+    webCsrfCookieOptions,
+    webSessionCookieOptions,
+    clearWebAuthCookies,
+} from "../../lib/webCookies.js"
 
 
 const emailVerifyConfirmSchema = z.object({
@@ -105,6 +110,76 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
+    app.post('/signup/email/web', async (req, res) => { // need extra for csrf
+        let parsedBody: SignupEmailSchema
+        try {
+            parsedBody = signupEmailSchema.parse(req.body)
+        } catch (error) {
+            if (error instanceof ZodError) {
+                const message = error.issues[0]?.message ?? "Invalid signup request"
+                return sendError(res, "VALIDATION_ERROR", message, 400)
+            }
+            throw error
+        }
+
+        const ipAddress = req.ip
+        const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+
+        let result: Awaited<ReturnType<typeof signupWithEmail>>
+        try {
+            result = await signupWithEmail(
+                {
+                    email: parsedBody.email,
+                    password: parsedBody.password,
+                    username: parsedBody.username,
+                    profileType: parsedBody.profileType,
+                },
+                { ipAddress, userAgent }
+            )
+        } catch (error) {
+            if (error instanceof SignupConflictError) {
+                return sendError(res, error.code, error.message, 409)
+            }
+            const message = error instanceof Error && error.message ? error.message : "Signup failed"
+            return sendError(res, "SIGNUP_FAILED", message, 400)
+        }
+
+        // get avatar presigned url, if chose avatar is true
+        let avatarUrl: string | undefined = undefined
+        let uploadUrl: string | undefined = undefined
+        let objectKey: string | undefined = undefined
+        let contentType: string | undefined = undefined
+        let maxBytes: number | undefined = undefined
+        if (parsedBody.choseAvatar) {
+            const upload = await getAvatarPresignedUrl(result.userId)
+            uploadUrl = upload.uploadUrl
+            avatarUrl = upload.publicUrl
+            objectKey = upload.objectKey
+            contentType = upload.contentType
+            maxBytes = upload.maxBytes
+        }
+
+        // csrf token is essentially the session token plus HMAC of (session token, secret key)
+        const csrfToken = crypto.createHmac("sha256", env.csrfSecretKey).update(result.sessionToken).digest("hex")
+
+        res.setCookie("session", result.sessionToken, webSessionCookieOptions())
+        res.setCookie("csrfToken", csrfToken, webCsrfCookieOptions())
+
+        return sendSuccess(res, {
+            user: {
+                id: result.userId,
+                avatarUrl: avatarUrl ?? null,
+            },
+            avatarUpload: parsedBody.choseAvatar ? {
+                uploadUrl: uploadUrl,
+                avatarUrl: avatarUrl,
+                objectKey: objectKey,
+                contentType: contentType,
+                maxBytes: maxBytes,
+            } : null,
+        })
+    })
+
     app.patch("/auth/me/avatar", { preHandler: [app.preAuthenticate] }, async (req, res) => {
         const { objectKey, avatarUrl } = req.body as { objectKey: string, avatarUrl: string }
 
@@ -160,15 +235,43 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         })
     })
 
+    app.post("/login/email/web", async (req, res) => {
+        const parsedBody: LoginEmailSchema = loginEmailSchema.parse(req.body)
+        const ipAddress = req.ip
+        const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined
+
+        let result: Awaited<ReturnType<typeof loginWithEmail>>
+        try {
+            result = await loginWithEmail(parsedBody.email, parsedBody.password, { ipAddress, userAgent })
+        } catch (e) {
+            const message =
+                e instanceof Error && e.message ? e.message : "Invalid email or password"
+            return sendError(res, "LOGIN_FAILED", message, 401)
+        }
+
+        const csrfToken = crypto.createHmac("sha256", env.csrfSecretKey).update(result.sessionToken).digest("hex")
+
+        res.setCookie("session", result.sessionToken, webSessionCookieOptions())
+        res.setCookie("csrfToken", csrfToken, webCsrfCookieOptions())
+
+        return sendSuccess(res, {
+            user: {
+                id: result.userId,
+                avatarUrl: result.avatarUrl
+            },
+        })
+    })
+
     // email stuff
 
     app.post("/email/verify/send", { preHandler: app.preAuthenticate }, async (req, res) => {
         const userId = req.userId
 
+        // use email_verified (same flag as /session) — not email_verified_at alone
         const { data: user, error: userError } = await supabase
             .schema("authn")
             .from("users")
-            .select("id, email, email_verified_at")
+            .select("id, email, email_verified, email_verified_at")
             .eq("id", userId)
             .maybeSingle()
 
@@ -180,7 +283,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "USER_NOT_FOUND", "User not found", 404)
         }
 
-        if (user.email_verified_at) {
+        if (user.email_verified === true) {
             return sendSuccess(res, { alreadyVerified: true })
         }
 
@@ -251,7 +354,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         await sendEmailVerificationCode({
             email: user.email,
             code,
-            expiresInMinutes        
+            expiresInMinutes
         })
 
         return sendSuccess(res, {
@@ -269,10 +372,11 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const now = new Date().toISOString()
         const maxAttempts = 5
 
+        // same email_verified flag as /session so we dont false-positive alreadyVerified
         const { data: user, error: userError } = await supabase
             .schema("authn")
             .from("users")
-            .select("id, email, email_verified_at")
+            .select("id, email, email_verified, email_verified_at")
             .eq("id", userId)
             .maybeSingle()
 
@@ -284,7 +388,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
             return sendError(res, "USER_NOT_FOUND", "User not found", 404)
         }
 
-        if (user.email_verified_at) {
+        if (user.email_verified === true) {
             return sendSuccess(res, { verified: true, alreadyVerified: true })
         }
 
@@ -320,6 +424,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
         if (verification.token_hash !== codeHash) {
             const nextAttempts = verification.attempts + 1
+            const attemptsRemaining = Math.max(0, maxAttempts - nextAttempts)
 
             await supabase
                 .schema("authn")
@@ -330,7 +435,15 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 })
                 .eq("id", verification.id)
 
-            return sendError(res, "EMAIL_VERIFY_INVALID_CODE", "Invalid code.", 400)
+            return sendError(
+                res,
+                "EMAIL_VERIFY_INVALID_CODE",
+                attemptsRemaining > 0
+                    ? `Invalid code. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} remaining.`
+                    : "Invalid code. Too many attempts.",
+                400,
+                { attemptsRemaining, maxAttempts }
+            )
         }
 
         const [{ error: userUpdateError }, { error: verificationUpdateError }] = await Promise.all([
@@ -603,12 +716,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         }
 
         await revokeSession(token)
-        res.clearCookie("session", {
-            httpOnly: true,
-            secure: env.state === "production",
-            sameSite: "lax",
-            path: "/",
-        })
+        clearWebAuthCookies(res)
         return res.status(200).send({
             success: true,
         })
@@ -616,12 +724,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     app.post("/logout/all", { preHandler: [app.authenticate] }, async (req, res) => {
         await revokeAllUserSessions(req.userId)
-        res.clearCookie("session", {
-            httpOnly: true,
-            secure: env.state === "production",
-            sameSite: "lax",
-            path: "/",
-        })
+        clearWebAuthCookies(res)
         return res.status(200).send({
             success: true,
         })
@@ -642,12 +745,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
 
     app.post("/me/sessions/all/revoke", { preHandler: app.authenticate }, async (req, res) => {
         await revokeAllUserSessions(req.userId)
-        res.clearCookie("session", {
-            httpOnly: true,
-            secure: env.state === "production",
-            sameSite: "lax",
-            path: "/",
-        })
+        clearWebAuthCookies(res)
         return res.status(200).send({ success: true })
     })
 
