@@ -69,8 +69,13 @@ app.register(cors, {
         'https://auth.nichemusic.app',
         'http://localhost:5173',
         'http://127.0.0.1:8788',
+        'http://tauri.localhost',
+        'https://tauri.localhost',
+        'tauri://localhost',
+        'http://127.0.0.1:5173',
+        'https://open.nichemusic.app'
     ],
-    credentials: true,
+    credentials: true
 })
 
 

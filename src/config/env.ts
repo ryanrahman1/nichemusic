@@ -46,6 +46,7 @@ const envSchema = z.object({
     emailCodePepper: z.string(),
     passwordResetBaseUrl: z.url(),
     apiPublicUrl: z.url(),
+    csrfSecretKey: z.string(),
 })
 
 export const env = envSchema.parse({
@@ -95,6 +96,7 @@ export const env = envSchema.parse({
     emailCodePepper: process.env.EMAIL_CODE_PEPPER!,
     passwordResetBaseUrl: process.env.PASSWORD_RESET_BASE_URL ?? "https://auth.nichemusic.app",
     apiPublicUrl: process.env.API_PUBLIC_URL ?? "https://api.nichemusic.app",
+    csrfSecretKey: process.env.CSRF_SECRET_KEY!,
 })
 
 export default env
