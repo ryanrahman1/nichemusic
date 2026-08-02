@@ -74,7 +74,9 @@ app.register(cors, {
         'https://tauri.localhost',
         'tauri://localhost',
         'http://127.0.0.1:5173',
-        'https://open.nichemusic.app'
+        'https://open.nichemusic.app',
+        "https://nchm.us",
+        "https://www.nchm.us",
     ],
     credentials: true
 })
