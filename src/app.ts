@@ -22,6 +22,7 @@ import notificationsRoutes from "./modules/notifications/routes.js"
 import searchRoutes from "./modules/search/routes.js"
 import feedRoutes from "./modules/feed/routes.js"
 import shareRoutes from "./modules/share/routes.js"
+import bioRoutes from "./modules/bio/routes.js"
 import messagesRoutes from "./modules/messages/routes.js"
 import moderationRoutes from "./modules/moderation/routes.js"
 import musicMatchesRoutes from "./modules/music-matches/routes.js"
@@ -96,6 +97,7 @@ app.register(notificationsRoutes)
 app.register(searchRoutes)
 app.register(feedRoutes)
 app.register(shareRoutes, { prefix: "/public/share" })
+app.register(bioRoutes, { prefix: "/public/bio" })
 app.register(messagesRoutes)
 app.register(moderationRoutes)
 app.register(musicMatchesRoutes)
