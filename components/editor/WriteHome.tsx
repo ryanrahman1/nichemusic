@@ -18,13 +18,20 @@ import {
   type ArticleCard,
   type ArticleTemplate,
   type ArticleType,
+  type OnboardingProfile,
   type WriterWorkspace,
 } from "@/lib/editorial/types";
 import { StatusView } from "@/components/status/StatusView";
 import styles from "@/components/editor/write-home.module.css";
 import Link from "next/link";
 
-export function WriteHome({ initial }: { initial: WriterWorkspace }) {
+export function WriteHome({
+  initial,
+  onboardingProfile,
+}: {
+  initial: WriterWorkspace;
+  onboardingProfile?: OnboardingProfile | null;
+}) {
   const router = useRouter();
   const [workspace, setWorkspace] = useState(initial);
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +42,12 @@ export function WriteHome({ initial }: { initial: WriterWorkspace }) {
   const [template, setTemplate] = useState<ArticleTemplate>("standard");
   const [type, setType] = useState<ArticleType>("news");
   const [busy, setBusy] = useState(false);
-  const [writerSlug, setWriterSlug] = useState("");
-  const [bio, setBio] = useState("");
+  const [writerSlug, setWriterSlug] = useState(onboardingProfile?.username ?? "");
+  const [displayName, setDisplayName] = useState(
+    onboardingProfile?.displayName ?? onboardingProfile?.username ?? "",
+  );
+  const [bio, setBio] = useState(onboardingProfile?.bio ?? "");
+  const [location, setLocation] = useState(onboardingProfile?.location ?? "");
 
   const onboard = !workspace.writer || !workspace.permissions.canWrite;
   const perms = workspace.permissions;
@@ -93,6 +104,8 @@ export function WriteHome({ initial }: { initial: WriterWorkspace }) {
       await createWriterOnboarding({
         slug: slugify(writerSlug),
         bio: bio.trim(),
+        displayName: displayName.trim() || undefined,
+        location: location.trim() || null,
       });
       setWorkspace(await getWriterWorkspace());
     } catch (err) {
@@ -172,11 +185,28 @@ export function WriteHome({ initial }: { initial: WriterWorkspace }) {
               />
             </label>
             <label>
+              Display name
+              <input
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Mara Okafor"
+              />
+            </label>
+            <label>
               Bio
               <input
                 required
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
+              />
+            </label>
+            <label>
+              Location
+              <input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="London, UK"
               />
             </label>
             <button type="submit" className="cta-download" disabled={busy}>

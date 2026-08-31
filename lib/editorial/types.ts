@@ -125,6 +125,13 @@ export type WriterWorkspace = {
   catalog: ArticleCard[];
 };
 
+export type OnboardingProfile = {
+  username: string | null;
+  displayName: string | null;
+  bio: string | null;
+  location: string | null;
+};
+
 export type WriterPermissions = {
   canWrite: boolean;
   canSubmit: boolean;

@@ -2,6 +2,7 @@ export const Endpoints = {
   loginEmailWeb: "/login/email/web",
   logout: "/logout",
   session: "/session",
+  me: "/me",
   editorialMe: "/editorial/me",
   editorialMeWorkspace: "/editorial/me/workspace",
   editorialWriterCreate: "/editorial/me/writer/create",
