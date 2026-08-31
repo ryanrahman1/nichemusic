@@ -754,7 +754,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
         const { data: user, error: userError } = await supabase
             .schema("authn")
             .from("users")
-            .select("id, avatar_url, email, email_verified")
+            .select("id, avatar_url, email, email_verified, username")
             .eq("id", req.userId)
             .single()
 
@@ -765,6 +765,7 @@ const authRoutes: FastifyPluginAsync = async (app) => {
                 id: req.userId,
                 avatarUrl: user.avatar_url,
                 email: user.email,
+                username: user.username ?? null,
             },
             emailVerified: user.email_verified,
         })

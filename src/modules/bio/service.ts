@@ -62,6 +62,16 @@ export type BioEditorial = {
     created_at: string
 }
 
+type EditorialRow = {
+    id: string
+    slug: string
+    title: string
+    subtitle: string | null
+    type: string
+    cover_image_url: string | null
+    created_at: string
+}
+
 export type BioPageData = {
     settings: BioSettings | null
     links: BioLink[]
@@ -69,6 +79,17 @@ export type BioPageData = {
     messages: BioMessage[]
     instagramPosts: BioInstagramPost[]
     editorials: BioEditorial[]
+}
+
+// turn the new editorial rows back into the old bio card contract
+function editorialLink(article: Pick<EditorialRow, "type" | "slug">): string {
+    const section = article.type === "review"
+        ? "reviews"
+        : article.type === "spotlight"
+            ? "spotlights"
+            : "news"
+
+    return `https://nichemusic.app/${section}/${encodeURIComponent(article.slug)}`
 }
 
 // grab everything for the link-in-bio page
@@ -114,10 +135,10 @@ export async function fetchBioPageData(): Promise<BioPageData> {
         supabase
             .schema("public")
             .from("editorials")
-            .select("id, name, subtitle, link, image_url, created_at")
-            .eq("active", true)
-            .is("deleted_at", null)
-            .order("created_at", { ascending: false }),
+            .select("id, slug, title, subtitle, type, cover_image_url, created_at")
+            .eq("status", "published")
+            .lte("published_at", new Date().toISOString())
+            .order("published_at", { ascending: false, nullsFirst: false }),
     ])
 
     const firstError =
@@ -136,6 +157,13 @@ export async function fetchBioPageData(): Promise<BioPageData> {
         updates: updatesRes.data ?? [],
         messages: messagesRes.data ?? [],
         instagramPosts: instagramRes.data ?? [],
-        editorials: editorialsRes.data ?? [],
+        editorials: ((editorialsRes.data ?? []) as EditorialRow[]).map((article) => ({
+            id: article.id,
+            name: article.title,
+            subtitle: article.subtitle,
+            link: editorialLink(article),
+            image_url: article.cover_image_url,
+            created_at: article.created_at,
+        })),
     }
 }

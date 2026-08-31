@@ -337,6 +337,38 @@ export async function getPostVideoPresignedUrl(postId: string, format: VideoForm
     }
 }
 
+export async function getEditorialMediaPresignedUrl(
+    editorialId: string,
+    format: "jpeg" | "webp" | "png" | "avif"
+): Promise<PresignedUploadResult> {
+    const bucketName = "editorial-media"
+    const publicBucket = "media/editorials"
+    const extension = extensionFor(format)
+    const contentType = contentTypeFor(format)
+    const objectKey = `${editorialId}/image-${generateRandomId(12)}.${extension}`
+
+    const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: objectKey,
+        ContentType: contentType,
+        CacheControl: "public, max-age=31536000, immutable",
+    })
+
+    const uploadUrl = await getSignedUrl(R2, command, {
+        expiresIn: 60 * 5,
+    })
+
+    const publicUrl = `${env.r2.publicBaseUrl}/${publicBucket}/${objectKey}`
+
+    return {
+        uploadUrl,
+        objectKey,
+        publicUrl,
+        contentType,
+        maxBytes: MAX_IMAGE_BYTES,
+    }
+}
+
 export async function getGroupAvatarPresignedUrl(groupId: string, format: UploadFormat): Promise<PresignedUploadResult> {
     const bucketName = "profile-pics"
     const publicBucket = "avatars"

@@ -31,6 +31,8 @@ import auxRealtimeRoutes from "./modules/games/auxRealtime.js"
 import playlistsRoutes from "./modules/playlists/routes.js"
 import badgesRoutes from "./modules/badges/routes.js"
 import gamesRoutes from "./modules/games/routes.js"
+import editorialRoutes from "./modules/editorial/routes.js"
+import legalRoutes from "./modules/legal/routes.js"
 import { sendSuccess } from "./global/response.js"
 
 
@@ -108,6 +110,8 @@ app.register(auxRealtimeRoutes)
 app.register(playlistsRoutes)
 app.register(badgesRoutes)
 app.register(gamesRoutes)
+app.register(editorialRoutes)
+app.register(legalRoutes)
 
 if (!isProd) {
     app.get("/aux-test", async (_req, res) => {

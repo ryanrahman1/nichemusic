@@ -6,6 +6,63 @@ import { sendError, sendSuccess } from "../../global/response.js"
 
 const DISCOVER_HOME_CACHE_TTL_MS = 90_000
 
+type DiscoverEditorialRow = {
+    id: string
+    slug: string
+    title: string
+    subtitle: string | null
+    type: string
+    cover_image_url: string | null
+    created_at: string
+    updated_at: string
+}
+
+// keep discover alive while an old database function is being replaced
+async function fallbackDiscoverHome(sectionLimit: number) {
+    const { data, error } = await supabase
+        .schema("public")
+        .from("editorials")
+        .select("id, slug, title, subtitle, type, cover_image_url, created_at, updated_at")
+        .eq("status", "published")
+        .lte("published_at", new Date().toISOString())
+        .order("published_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+
+    if (error) throw new Error(error.message)
+
+    const article = (data?.[0] ?? null) as DiscoverEditorialRow | null
+    const section = article?.type === "review"
+        ? "reviews"
+        : article?.type === "spotlight"
+            ? "spotlights"
+            : "news"
+
+    return {
+        generatedAt: new Date().toISOString(),
+        limitPerSection: sectionLimit,
+        sections: {
+            forYou: [],
+            trendingNicheTracks: [],
+            newNicheReleases: [],
+            featuredPlaylists: [],
+            artistSpotlight: article
+                ? {
+                    id: article.id,
+                    name: article.title,
+                    subtitle: article.subtitle,
+                    link: `https://nichemusic.app/${section}/${encodeURIComponent(article.slug)}`,
+                    image_url: article.cover_image_url,
+                    created_at: article.created_at,
+                    updated_at: article.updated_at,
+                }
+                : null,
+            popularProfiles: [],
+            recentPosts: [],
+            badgesCommunitiesChallenges: [],
+        },
+    }
+}
+
 const searchRoutes: FastifyPluginAsync = async (app) => {
     app.get('/discover', { preHandler: app.optionalAuthenticate }, async (req, res) => {
         const { sectionLimit } = discoverHomeQuerySchema.parse(req.query)
@@ -18,13 +75,18 @@ const searchRoutes: FastifyPluginAsync = async (app) => {
                 key: cacheKey,
                 ttlMs: DISCOVER_HOME_CACHE_TTL_MS,
                 loader: async () => {
-                    const { data, error } = await supabase.schema("public").rpc("get_discover_home", {
-                        viewer_id_arg: viewerId,
-                        section_limit: sectionLimit,
-                    })
+                    try {
+                        const { data, error } = await supabase.schema("public").rpc("get_discover_home", {
+                            viewer_id_arg: viewerId,
+                            section_limit: sectionLimit,
+                        })
 
-                    if (error) throw new Error(error.message)
-                    return data
+                        if (error) throw new Error(error.message)
+                        return data
+                    } catch (error) {
+                        req.log.warn({ err: error }, "discover RPC unavailable, using editorial fallback")
+                        return fallbackDiscoverHome(sectionLimit)
+                    }
                 },
             })
 
