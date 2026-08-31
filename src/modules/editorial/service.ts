@@ -740,12 +740,15 @@ export async function getWriterPublicProfile(writerSlug: string) {
     const row = writer as WriterRow
 
     const [followersCount, editedCount] = await Promise.all([
-        supabase
-            .schema("public")
-            .from("profiles")
-            .select("followers_count")
-            .eq("id", row.profile_id)
-            .maybeSingle()
+        // make the supabase thenable a real promise before catching errors
+        Promise.resolve(
+            supabase
+                .schema("public")
+                .from("profiles")
+                .select("followers_count")
+                .eq("id", row.profile_id)
+                .maybeSingle()
+        )
             .then(({ data, error }) => {
                 if (error) return 0
                 return data?.followers_count ?? 0
