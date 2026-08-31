@@ -18,7 +18,7 @@ export const TEAM: TeamMember[] = [
     name: "James Woo",
     role: "Co-Founder & Design Lead",
     listeningLabel: "Currently listening to",
-    listening: "iPhone — oopsy",
+    listening: "Bad Blood — Taylor Swift",
     initials: "JW",
   },
   {
