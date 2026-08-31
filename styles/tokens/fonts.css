@@ -1,0 +1,10 @@
+/* body/display follow the old niche site system stack.
+   inter stays around for ui/forms via --font-inter from next/font */
+:root {
+  --font-system: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  --font-display: var(--font-system);
+  --font-sans: var(--font-system);
+  --font-body: var(--font-system);
+  --font-ui: var(--font-inter), var(--font-system);
+}

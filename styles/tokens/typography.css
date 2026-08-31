@@ -1,0 +1,49 @@
+/* type steps + tight display rhythm from the old niche site /
+   design system — not a 1:1 dump, just the same feel */
+:root {
+  --weight-body: 400;
+  --weight-display: 500;
+  --weight-ui-medium: 560;
+  --weight-ui-semi: 580;
+  --weight-ui-bold: 650;
+  --weight-overline: 700;
+
+  --type-mega: clamp(64px, 14vw, 180px);
+  --type-hero: clamp(52px, 11vw, 128px);
+  --type-footer: clamp(52px, 10vw, 140px);
+  --type-display-1: clamp(44px, 8vw, 112px);
+  --type-display-2: clamp(50px, 8vw, 118px);
+  --type-display-3: clamp(32px, 5.5vw, 72px);
+  --type-title-1: clamp(28px, 4vw, 56px);
+  --type-title-2: clamp(24px, 3.4vw, 48px);
+  --type-title-3: clamp(30px, 4vw, 54px);
+  --type-lede: clamp(24px, 3.6vw, 52px);
+  --type-prose: clamp(19px, 2vw, 28px);
+
+  --type-body-lg: 20px;
+  --type-body: 18px;
+  --type-body-sm: 17px;
+  --type-ui: 16px;
+  --type-ui-sm: 15px;
+  --type-caption: 14px;
+  --type-overline: 12px;
+
+  --leading-mega: 0.86;
+  --leading-display: 0.88;
+  --leading-tight: 0.92;
+  --leading-title: 0.94;
+  --leading-lede: 1.05;
+  --leading-prose: 1.28;
+  --leading-body: 1.4;
+  --leading-body-loose: 1.5;
+
+  --track-mega: -0.08em;
+  --track-hero: -0.08em;
+  --track-display: -0.075em;
+  --track-statement: -0.06em;
+  --track-title: -0.05em;
+  --track-page: -0.045em;
+  --track-prose: -0.02em;
+  --track-ui: -0.02em;
+  --track-overline: 0.12em;
+}
