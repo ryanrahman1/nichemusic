@@ -3,10 +3,11 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react";
 
 const LS_KEY = "niche-editor-layout";
@@ -17,6 +18,7 @@ const WIDGET_MIN = 220;
 const WIDGET_MAX = 440;
 const WIDGET_DEFAULT = 280;
 const MAIN_MIN = 380;
+const DEFAULT_LAYOUT = { side: SIDE_DEFAULT, widget: WIDGET_DEFAULT };
 
 function clamp(n: number, min: number, max: number) {
   return Math.min(max, Math.max(min, n));
@@ -25,36 +27,57 @@ function clamp(n: number, min: number, max: number) {
 function readLayout() {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return { side: SIDE_DEFAULT, widget: WIDGET_DEFAULT };
+    if (!raw) return DEFAULT_LAYOUT;
     const parsed = JSON.parse(raw) as { side?: unknown; widget?: unknown };
     return {
       side: clamp(Number(parsed.side) || SIDE_DEFAULT, SIDE_MIN, SIDE_MAX),
       widget: clamp(Number(parsed.widget) || WIDGET_DEFAULT, WIDGET_MIN, WIDGET_MAX),
     };
   } catch {
-    return { side: SIDE_DEFAULT, widget: WIDGET_DEFAULT };
+    return DEFAULT_LAYOUT;
   }
 }
 
+let layoutSnap = DEFAULT_LAYOUT;
+
+function getLayoutSnapshot() {
+  // reuse the obj if widths didnt move so useSyncExternalStore chills
+  const next = readLayout();
+  if (next.side === layoutSnap.side && next.widget === layoutSnap.widget) {
+    return layoutSnap;
+  }
+  layoutSnap = next;
+  return layoutSnap;
+}
+
+function getServerLayoutSnapshot() {
+  return DEFAULT_LAYOUT;
+}
+
+function subscribeLayout() {
+  // we only need the first client read, drag state lives in react
+  return () => {};
+}
+
 // remember the desk widths so writers dont reset every session
-export function useEditorLayout(hasWidget: boolean) {
-  const shellRef = useRef<HTMLDivElement>(null);
-  const [side, setSide] = useState(SIDE_DEFAULT);
-  const [widget, setWidget] = useState(WIDGET_DEFAULT);
-  const [ready, setReady] = useState(false);
+export function useEditorLayout(
+  hasWidget: boolean,
+  shellRef: RefObject<HTMLDivElement | null>,
+) {
+  const persisted = useSyncExternalStore(
+    subscribeLayout,
+    getLayoutSnapshot,
+    getServerLayoutSnapshot,
+  );
+  const [override, setOverride] = useState<{ side: number; widget: number } | null>(null);
   const [dragging, setDragging] = useState<"side" | "widget" | null>(null);
+  const side = override?.side ?? persisted.side;
+  const widget = override?.widget ?? persisted.widget;
 
   useEffect(() => {
-    const next = readLayout();
-    setSide(next.side);
-    setWidget(next.widget);
-    setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(LS_KEY, JSON.stringify({ side, widget }));
-  }, [ready, side, widget]);
+    if (!override) return;
+    localStorage.setItem(LS_KEY, JSON.stringify(override));
+  }, [override]);
 
   const drag = useCallback(
     (which: "side" | "widget", e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -73,11 +96,17 @@ export function useEditorLayout(hasWidget: boolean) {
         const dx = ev.clientX - startX;
         if (which === "side") {
           const max = Math.min(SIDE_MAX, total - widgetW - MAIN_MIN);
-          setSide(clamp(startSide + dx, SIDE_MIN, Math.max(SIDE_MIN, max)));
+          setOverride({
+            side: clamp(startSide + dx, SIDE_MIN, Math.max(SIDE_MIN, max)),
+            widget: startWidget,
+          });
           return;
         }
         const max = Math.min(WIDGET_MAX, total - startSide - MAIN_MIN);
-        setWidget(clamp(startWidget - dx, WIDGET_MIN, Math.max(WIDGET_MIN, max)));
+        setOverride({
+          side: startSide,
+          widget: clamp(startWidget - dx, WIDGET_MIN, Math.max(WIDGET_MIN, max)),
+        });
       }
 
       function onUp() {
@@ -91,11 +120,10 @@ export function useEditorLayout(hasWidget: boolean) {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [hasWidget, side, widget],
+    [hasWidget, shellRef, side, widget],
   );
 
   return {
-    shellRef,
     side,
     widget,
     dragging,

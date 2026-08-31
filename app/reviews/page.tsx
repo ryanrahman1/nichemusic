@@ -3,7 +3,7 @@ import { ReviewIndex } from "@/components/editorial/ReviewIndex";
 import styles from "@/components/article/article.module.css";
 import { StatusView } from "@/components/status/StatusView";
 import { listPublishedReviews } from "@/lib/editorial/public";
-import { buildPageMetadata, siteConfig } from "@/lib/site";
+import { buildPageMetadata } from "@/lib/site";
 
 export const metadata = buildPageMetadata({
   title: "Reviews",
@@ -21,8 +21,7 @@ export default async function ReviewsPage() {
         <header className={styles.indexHead}>
           <h1>Reviews.</h1>
           <p className={styles.lede}>
-            Albums we sat with. {siteConfig.name} scores the underground as it
-            lands — verdict first, then the write-up.
+            Albums reviewed by the community (and us), plus their verdicts.
           </p>
         </header>
 

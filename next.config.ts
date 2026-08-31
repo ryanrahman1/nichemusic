@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:3932";
+const apiTarget = process.env.API_PROXY_TARGET || "https://api.nichemusic.app";
 
 const nextConfig: NextConfig = {
   images: {

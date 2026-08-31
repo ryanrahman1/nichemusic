@@ -185,13 +185,19 @@ function PickRow({
 }) {
   const [from, setFrom] = useState(toLocal(pick.showFrom));
   const [until, setUntil] = useState(toLocal(pick.showUntil));
+  const [syncedFrom, setSyncedFrom] = useState(pick.showFrom);
+  const [syncedUntil, setSyncedUntil] = useState(pick.showUntil);
   const [reviewQ, setReviewQ] = useState("");
   const [reviews, setReviews] = useState<ArticleCard[]>([]);
 
-  useEffect(() => {
+  if (pick.showFrom !== syncedFrom) {
+    setSyncedFrom(pick.showFrom);
     setFrom(toLocal(pick.showFrom));
+  }
+  if (pick.showUntil !== syncedUntil) {
+    setSyncedUntil(pick.showUntil);
     setUntil(toLocal(pick.showUntil));
-  }, [pick.showFrom, pick.showUntil]);
+  }
 
   function queueReviews(value: string) {
     if (value.trim().length < 2) {

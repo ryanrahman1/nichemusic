@@ -170,12 +170,12 @@ function EntityList({
 }) {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<MusicSearchHit[]>([]);
+  if (q.trim().length < 2 && hits.length > 0) {
+    setHits([]);
+  }
 
   useEffect(() => {
-    if (q.trim().length < 2) {
-      setHits([]);
-      return;
-    }
+    if (q.trim().length < 2) return;
     const t = window.setTimeout(() => {
       void searchMusic(q.trim(), kind)
         .then((rows) => setHits(rows.filter((row) => row.kind === kind).slice(0, 6)))
@@ -282,12 +282,15 @@ function FeaturedPicker({
   const id = editorialId || "";
   const pieceSlug = slug || "";
   const pieceKey = `${id}\t${pieceSlug}`;
+  if (!id && !pieceSlug && picked !== null) {
+    setPicked(null);
+  }
+  if (q.trim().length < 2 && hits.length > 0) {
+    setHits([]);
+  }
 
   useEffect(() => {
-    if (q.trim().length < 2) {
-      setHits([]);
-      return;
-    }
+    if (q.trim().length < 2) return;
     const t = window.setTimeout(() => {
       void searchEditorials(q.trim()).then((data) => {
         setHits((data.articles ?? []).filter((row) => row.id !== excludeArticleId).slice(0, 6));
@@ -300,10 +303,7 @@ function FeaturedPicker({
     const tab = pieceKey.indexOf("\t");
     const nextId = tab === -1 ? pieceKey : pieceKey.slice(0, tab);
     const nextSlug = tab === -1 ? "" : pieceKey.slice(tab + 1);
-    if (!nextId && !nextSlug) {
-      setPicked(null);
-      return;
-    }
+    if (!nextId && !nextSlug) return;
     let alive = true;
     void (async () => {
       if (nextSlug) {

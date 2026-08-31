@@ -168,9 +168,6 @@ export function HomeView({ data }: { data: EditorialHome }) {
               <p className={articleStyles.kicker}>New Music Friday</p>
               <h2>The hottest tracks from the underground this week.</h2>
             </div>
-            <Link href="#new-music" className="underline-link underline-link--action">
-              See the full list
-            </Link>
           </div>
           <div className={styles.tracks}>
             {data.newMusic.map((pick) => (

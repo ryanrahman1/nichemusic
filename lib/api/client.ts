@@ -3,7 +3,8 @@ import { Endpoints } from "@/lib/api/endpoints";
 import { ApiError, type ApiEnvelope } from "@/lib/api/types";
 
 const API_BASE =
-  (process.env.NEXT_PUBLIC_API_URL as string | undefined) || "/api";
+  (process.env.NEXT_PUBLIC_API_URL as string | undefined) ||
+  "https://api.nichemusic.app";
 
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -13,6 +14,11 @@ import { FIELD_HELP, type HelpId } from "@/components/editor/fieldHelp";
 import styles from "./cms.module.css";
 
 const HELP_OPEN = "niche-help-open";
+
+function subscribeNever() {
+  // client-only mount flag, nothing to subscribe to
+  return () => {};
+}
 
 export function FieldHint({
   id,
@@ -36,13 +42,13 @@ export function HelpButton({ id }: { id: HelpId }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
   const [sheet, setSheet] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0 });
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // only one hint at a time so they dont stack
   useEffect(() => {

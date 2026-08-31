@@ -4,7 +4,7 @@ import teaserStyles from "@/components/editorial/article-teaser.module.css";
 import styles from "@/components/article/article.module.css";
 import { StatusView } from "@/components/status/StatusView";
 import { listPublishedArticles } from "@/lib/editorial/public";
-import { buildPageMetadata, siteConfig } from "@/lib/site";
+import { buildPageMetadata } from "@/lib/site";
 
 export const metadata = buildPageMetadata({
   title: "News",
@@ -23,8 +23,7 @@ export default async function NewsPage() {
           <p className={styles.kicker}>The desk</p>
           <h1>News.</h1>
           <p className={styles.lede}>
-            Underground music, documented as it happens. {siteConfig.name}{" "}
-            publishes the story as it lands.
+            Underground music, documented as it happens.
           </p>
         </header>
 

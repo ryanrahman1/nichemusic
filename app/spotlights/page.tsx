@@ -3,7 +3,7 @@ import { SpotlightIndex } from "@/components/editorial/SpotlightIndex";
 import styles from "@/components/article/article.module.css";
 import { StatusView } from "@/components/status/StatusView";
 import { listPublishedSpotlights } from "@/lib/editorial/public";
-import { buildPageMetadata, siteConfig } from "@/lib/site";
+import { buildPageMetadata } from "@/lib/site";
 
 export const metadata = buildPageMetadata({
   title: "Spotlights",
@@ -21,9 +21,7 @@ export default async function SpotlightsPage() {
         <header className={styles.indexHead}>
           <h1>Spotlights.</h1>
           <p className={styles.lede}>
-            Faces behind the records. {siteConfig.name} profiles the artists
-            shaping underground scenes — where they&apos;re from, what they
-            sound like, why they matter now.
+            Discover the artists shaping underground scenes.
           </p>
         </header>
 

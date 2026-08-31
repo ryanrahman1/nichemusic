@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import styles from "@/components/article/article.module.css";
 
 export function ArticleShare({
@@ -11,8 +11,12 @@ export function ArticleShare({
   path: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const canNative =
-    typeof navigator !== "undefined" && typeof navigator.share === "function";
+  // keep native share browser-only without breaking hydration
+  const canNative = useSyncExternalStore(
+    () => () => {},
+    () => typeof navigator !== "undefined" && typeof navigator.share === "function",
+    () => false,
+  );
 
   function url() {
     if (typeof window === "undefined") return path;

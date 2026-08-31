@@ -52,8 +52,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let live = true;
+    void (async () => {
+      try {
+        const result = await apiRequest<SessionResult>(Endpoints.session);
+        if (!live) return;
+        setUser(result.user);
+        setEmailVerified(result.emailVerified);
+        setStatus("signedIn");
+      } catch (err) {
+        if (!live) return;
+        if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+          setUser(null);
+          setEmailVerified(false);
+          setStatus("signedOut");
+          return;
+        }
+        setUser(null);
+        setEmailVerified(false);
+        setStatus("signedOut");
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, []);
 
   async function login(body: LoginBody) {
     await apiRequest<LoginResult>(Endpoints.loginEmailWeb, {

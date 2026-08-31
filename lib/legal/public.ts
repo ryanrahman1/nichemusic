@@ -11,7 +11,7 @@ function apiOrigin() {
   return (
     process.env.API_PROXY_TARGET ||
     process.env.API_INTERNAL_URL ||
-    "http://localhost:3932"
+    "https://api.nichemusic.app"
   );
 }
 
@@ -29,11 +29,18 @@ async function publicGet<T>(path: string): Promise<T> {
   return data.result;
 }
 
-export async function listLegalDocuments() {
+export async function listLegalDocuments(): Promise<{
+  documents: LegalDocument[];
+  error?: string;
+}> {
   try {
     return await publicGet<{ documents: LegalDocument[] }>(Endpoints.legalDocuments);
-  } catch {
-    return { documents: [] as LegalDocument[] };
+  } catch (error) {
+    console.error("[legal] document list unavailable", error);
+    return {
+      documents: [] as LegalDocument[],
+      error: "Legal documents are temporarily unavailable.",
+    };
   }
 }
 

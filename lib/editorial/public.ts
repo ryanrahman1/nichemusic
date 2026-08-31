@@ -31,7 +31,7 @@ function apiOrigin() {
   return (
     process.env.API_PROXY_TARGET ||
     process.env.API_INTERNAL_URL ||
-    "http://localhost:3932"
+    "https://api.nichemusic.app"
   );
 }
 

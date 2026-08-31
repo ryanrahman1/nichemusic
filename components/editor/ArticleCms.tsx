@@ -34,6 +34,7 @@ import { slugify } from "@/lib/editorial/cms";
 import { WidgetPanel } from "@/components/editor/WidgetPanel";
 import { parseWidgets } from "@/lib/editorial/cms";
 import { FieldHint, HelpButton } from "@/components/editor/FieldHint";
+import { PublishedEditNotice, type PublishedEditNoticeMode } from "@/components/editor/PublishedEditNotice";
 import { StandardsGate } from "@/components/editor/StandardsGate";
 import type { HelpId } from "@/components/editor/fieldHelp";
 import { useEditorLayout } from "@/components/editor/useEditorLayout";
@@ -48,7 +49,8 @@ type Props = {
 };
 
 const WRITER_SAVE = ["draft", "changes_requested", "rejected", "published"];
-const DESK_SAVE = ["submitted", "in_review", "approved"];
+const DESK_SAVE = ["submitted", "in_review", "approved", "published"];
+const PUBLISHABLE_STATUSES = ["submitted", "in_review", "approved"];
 type SlugCheckState = "idle" | "checking" | "available" | "taken" | "error";
 
 export function ArticleCms({
@@ -75,6 +77,10 @@ export function ArticleCms({
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState(article.status ?? "draft");
   const [slugCheck, setSlugCheck] = useState<SlugCheckState>("idle");
+  const [publishedEditNotice, setPublishedEditNotice] =
+    useState<PublishedEditNoticeMode | null>(
+      article.status === "published" ? "warning" : null,
+    );
   const [canSelfPublish, setCanSelfPublish] = useState(false);
   const owner = Boolean(
     viewerWriterId &&
@@ -89,7 +95,11 @@ export function ArticleCms({
   const [gate, setGate] = useState<null | "submit" | "publish">(null);
   const [agreed, setAgreed] = useState(false);
   const dirty = useRef(false);
-  const layout = useEditorLayout(payload.template === "artist_spotlight");
+  const shellRef = useRef<HTMLDivElement>(null);
+  const { vars: layoutVars, dragging, dragSide, dragWidget } = useEditorLayout(
+    payload.template === "artist_spotlight",
+    shellRef,
+  );
   const coverRef = useRef<HTMLInputElement>(null);
   const extraRef = useRef<HTMLInputElement>(null);
   const extraField = useRef<TemplateTextKey>("artworkUrl");
@@ -101,11 +111,11 @@ export function ArticleCms({
     setSaveState("Unsaved");
   };
 
-  const persist = useCallback(async () => {
+  const persist = useCallback(async (): Promise<ArticleCard | null> => {
     const allowed = useDeskApi
       ? Boolean(permissions?.canEditAny) || DESK_SAVE.includes(status)
       : WRITER_SAVE.includes(status);
-    if (!allowed) return;
+    if (!allowed) return null;
 
     setSaveState("Saving…");
     setError(null);
@@ -124,13 +134,30 @@ export function ArticleCms({
     };
     try {
       // desk saves credit the editor, writer routes stay owner-only
-      if (useDeskApi) await updateDeskArticle(article.id, body);
-      else await updateMyArticle(article.id, body);
+      const result = useDeskApi
+        ? await updateDeskArticle(article.id, body)
+        : await updateMyArticle(article.id, body);
+      const next = result.article;
+      const nextStatus =
+        next.status ??
+        (status === "published"
+          ? useDeskApi
+            ? "in_review"
+            : "changes_requested"
+          : status);
       dirty.current = false;
-      setSaveState("Saved");
+      setStatus(nextStatus);
+      if (status === "published" && nextStatus !== "published") {
+        setSaveState("Unpublished — needs review");
+        setPublishedEditNotice("unpublished");
+      } else {
+        setSaveState("Saved");
+      }
+      return next;
     } catch (err) {
       setSaveState("Couldnt save");
       setError(err instanceof Error ? err.message : "Couldnt save");
+      return null;
     }
   }, [
     article.id,
@@ -228,12 +255,20 @@ export function ArticleCms({
     setBusy(true);
     setError(null);
     try {
-      await persist();
+      // only save first when this action has edits to push
+      const shouldPersist = dirty.current || status === "published";
+      const saved = shouldPersist ? await persist() : null;
+      if (shouldPersist && !saved) return;
       if (kind === "submit") {
         const { article: next } = await submitMyArticle(article.id);
         setStatus(next.status ?? "submitted");
         setSaveState("Submitted");
       } else {
+        if (status === "published" && saved?.status !== "published") {
+          setError("This edit needs review before it can be published again.");
+          setGate(null);
+          return;
+        }
         const { article: next } = useDeskApi
           ? await publishDeskArticle(article.id)
           : await publishMyArticle(article.id);
@@ -280,7 +315,9 @@ export function ArticleCms({
             {busy && gate === "submit" ? "Working…" : status === "published" ? "Submit for review" : "Submit"}
           </button>
         )}
-        {(useDeskApi ? canDeskPublish && DESK_SAVE.includes(status) : canSelfPublish && DESK_SAVE.includes(status)) && (
+        {(useDeskApi
+          ? canDeskPublish && PUBLISHABLE_STATUSES.includes(status)
+          : canSelfPublish && PUBLISHABLE_STATUSES.includes(status)) && (
           <button
             type="button"
             className={styles.primary}
@@ -326,13 +363,13 @@ export function ArticleCms({
         )}
       </header>
 
-      <div className={styles.body} ref={layout.shellRef} style={layout.vars}>
+      <div className={styles.body} ref={shellRef} style={layoutVars}>
         <aside className={styles.side}>
           <button
             type="button"
-            className={layout.dragging === "side" ? `${styles.resizeHandle} ${styles.resizeHandleOn}` : styles.resizeHandle}
+            className={dragging === "side" ? `${styles.resizeHandle} ${styles.resizeHandleOn}` : styles.resizeHandle}
             aria-label="Resize metadata column"
-            onPointerDown={layout.dragSide}
+            onPointerDown={dragSide}
           />
           {error && <p className={styles.err}>{error}</p>}
 
@@ -520,8 +557,8 @@ export function ArticleCms({
             onChange={setWidgets}
             excludeArticleId={article.id}
             defaultArtist={payload.templateData.artist}
-            onResize={layout.dragWidget}
-            resizing={layout.dragging === "widget"}
+            onResize={dragWidget}
+            resizing={dragging === "widget"}
           />
         )}
 
@@ -569,6 +606,12 @@ export function ArticleCms({
             if (!busy) setGate(null);
           }}
           onConfirm={() => void confirmGate()}
+        />
+      ) : null}
+      {publishedEditNotice ? (
+        <PublishedEditNotice
+          mode={publishedEditNotice}
+          onDismiss={() => setPublishedEditNotice(null)}
         />
       ) : null}
     </div>

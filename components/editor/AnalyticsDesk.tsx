@@ -31,10 +31,15 @@ export function AnalyticsDesk({ canReview }: { canReview: boolean }) {
   const [mine, setMine] = useState<WriterAnalytics | null>(null);
   const [desk, setDesk] = useState<DeskAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const fetchKey = `${days}:${canReview}`;
+  const [seenKey, setSeenKey] = useState(fetchKey);
+  if (seenKey !== fetchKey) {
+    setSeenKey(fetchKey);
+    setError(null);
+  }
 
   useEffect(() => {
     let live = true;
-    setError(null);
     void (async () => {
       try {
         const [writer, site] = await Promise.all([

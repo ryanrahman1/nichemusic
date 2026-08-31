@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import styles from "./download.module.css";
 
 type Platform = "ios" | "macos" | "windows" | "web";
@@ -67,6 +67,15 @@ function detectPlatform(): Platform {
   return "web";
 }
 
+function subscribePlatform() {
+  // platform doesnt change mid-visit
+  return () => {};
+}
+
+function getServerPlatform(): Platform | null {
+  return null;
+}
+
 function PlatformIcon({ id }: { id: Platform }) {
   if (id === "windows") {
     return (
@@ -118,11 +127,7 @@ function PlatformCard({
 }
 
 export function DownloadView() {
-  const [detected, setDetected] = useState<Platform | null>(null);
-
-  useEffect(() => {
-    setDetected(detectPlatform());
-  }, []);
+  const detected = useSyncExternalStore(subscribePlatform, detectPlatform, getServerPlatform);
 
   const featured = detected ? PLATFORMS.find((row) => row.id === detected) : null;
   const others = detected ? PLATFORMS.filter((row) => row.id !== detected) : [];

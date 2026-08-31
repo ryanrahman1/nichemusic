@@ -15,27 +15,35 @@ export function ArticleEditLink({
 }) {
   const { status } = useSession();
   const [href, setHref] = useState<string | null>(null);
+  const writerKey = writerIds.join(",");
+
+  if (status !== "signedIn" && href !== null) {
+    setHref(null);
+  }
 
   useEffect(() => {
-    if (status !== "signedIn") {
-      setHref(null);
-      return;
-    }
+    if (status !== "signedIn") return;
 
+    let cancelled = false;
     void (async () => {
       try {
         const me = await getMyWriter();
         const id = me.writer?.id;
-        if (me.permissions.canEditAny || (id && writerIds.includes(id) && me.permissions.canWrite)) {
+        const ids = writerKey ? writerKey.split(",") : [];
+        if (cancelled) return;
+        if (me.permissions.canEditAny || (id && ids.includes(id) && me.permissions.canWrite)) {
           setHref(`/write/${articleId}`);
         } else {
           setHref(null);
         }
       } catch {
-        setHref(null);
+        if (!cancelled) setHref(null);
       }
     })();
-  }, [articleId, status, writerIds.join(",")]);
+    return () => {
+      cancelled = true;
+    };
+  }, [articleId, status, writerKey]);
 
   if (!href) return null;
 

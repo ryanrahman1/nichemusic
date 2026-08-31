@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import styles from "@/components/editor/write-home.module.css";
 
 const PREFIX = "nm.desk.fold.";
+const FOLD_EVENT = "nm.desk.fold";
 
 function readOpen(id: string, fallback: boolean) {
   try {
@@ -14,6 +15,12 @@ function readOpen(id: string, fallback: boolean) {
     // private mode chill
   }
   return fallback;
+}
+
+function subscribeFold(onChange: () => void) {
+  // same-tab toggles ping everyone so they reread ls
+  window.addEventListener(FOLD_EVENT, onChange);
+  return () => window.removeEventListener(FOLD_EVENT, onChange);
 }
 
 export function DeskFold({
@@ -29,22 +36,20 @@ export function DeskFold({
   children: ReactNode;
   defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  useEffect(() => {
-    setOpen(readOpen(id, defaultOpen));
-  }, [id, defaultOpen]);
+  const open = useSyncExternalStore(
+    subscribeFold,
+    () => readOpen(id, defaultOpen),
+    () => defaultOpen,
+  );
 
   function toggle() {
-    setOpen((on) => {
-      const next = !on;
-      try {
-        window.localStorage.setItem(PREFIX + id, next ? "1" : "0");
-      } catch {
-        // whatever
-      }
-      return next;
-    });
+    const next = !open;
+    try {
+      window.localStorage.setItem(PREFIX + id, next ? "1" : "0");
+    } catch {
+      // whatever
+    }
+    window.dispatchEvent(new Event(FOLD_EVENT));
   }
 
   return (

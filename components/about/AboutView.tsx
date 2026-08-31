@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { CoverImage } from "@/components/home/CoverImage";
 import {
   MARQUEE_WORDS,
@@ -133,7 +133,7 @@ function ScramblePhrase({ phrases }: { phrases: readonly string[] }) {
       frame = window.requestAnimationFrame(hold);
     };
 
-    setProgress(0);
+    // rAF callback owns progress so we dont setState sync in the effect
     frame = window.requestAnimationFrame(hold);
     return () => window.cancelAnimationFrame(frame);
   }, [index, phase, reduce]);
@@ -271,14 +271,18 @@ function splitListen(value: string) {
   return [album ?? value, artist ?? ""] as const;
 }
 
+function subscribeReducedMotion(onChange: () => void) {
+  // listen for os motion pref flips
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function getReducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function usePrefersReducedMotion() {
-  const [reduce, setReduce] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduce(mq.matches);
-    const onChange = () => setReduce(mq.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-  return reduce;
+  // browser motion pref, ssr stays false so hydrate matches
+  return useSyncExternalStore(subscribeReducedMotion, getReducedMotion, () => false);
 }
