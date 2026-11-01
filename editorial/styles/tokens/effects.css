@@ -1,0 +1,36 @@
+:root {
+  --shade-image: rgba(0, 0, 0, 0.46);
+  --shade-card: rgba(0, 0, 0, 0.52);
+  --shade-scrim: rgba(0, 0, 0, 0.72);
+
+  --shade-hero: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.1),
+    rgba(0, 0, 0, 0.88)
+  );
+  --shade-hero-vignette: radial-gradient(
+    circle at center,
+    rgba(0, 0, 0, 0.05),
+    rgba(0, 0, 0, 0.8)
+  );
+  --shade-feature: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.88),
+    rgba(0, 0, 0, 0.12)
+  );
+  --shade-album: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.62)
+  );
+
+  --glow-accent: radial-gradient(
+    circle at 70% 30%,
+    var(--accent-tint-14),
+    transparent 42%
+  );
+  --seam-top: linear-gradient(to bottom, var(--bg), rgba(5, 5, 5, 0));
+
+  --filter-photo: saturate(0.85) contrast(1.05);
+  --image-focal: center 15%;
+}

@@ -1,0 +1,15 @@
+.badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--track-overline);
+  text-transform: uppercase;
+  padding: 3px 6px;
+  border: 1px solid var(--line-accent);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.muted {
+  border-color: var(--line);
+  color: var(--text-muted);
+}

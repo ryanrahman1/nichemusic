@@ -1,0 +1,143 @@
+.page {
+  padding: calc(var(--header-height) + var(--space-13)) 0 var(--space-16);
+}
+
+.doc {
+  max-width: 880px;
+  padding: 0 var(--gutter);
+  color: var(--text-muted);
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.doc h1 {
+  margin: 0 0 18px;
+  width: max-content;
+  max-width: min(var(--measure-display-wide), calc(100vw - var(--gutter) * 2));
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(48px, 8vw, 100px);
+  font-weight: 500;
+  letter-spacing: -0.075em;
+  line-height: 0.9;
+}
+
+.doc > p:first-of-type {
+  margin: 0 0 var(--space-13);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.doc h2 {
+  margin: 56px 0 18px;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: clamp(26px, 4vw, 42px);
+  font-weight: 500;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.doc h3 {
+  margin: 34px 0 12px;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.doc p {
+  margin: 0 0 16px;
+}
+
+.doc ul,
+.doc ol {
+  margin: 0 0 24px;
+  padding-left: 22px;
+  list-style-position: outside;
+}
+
+.doc ul {
+  list-style-type: disc;
+}
+
+.doc ol {
+  list-style-type: decimal;
+}
+
+.doc li {
+  margin-bottom: 8px;
+  display: list-item;
+}
+
+.doc li::marker {
+  color: var(--text-muted);
+}
+
+.doc strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.doc a {
+  position: relative;
+  display: inline-block;
+  width: fit-content;
+  padding-bottom: 4px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.doc a::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: var(--underline-height);
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: var(--transition-underline);
+}
+
+.doc a:hover::after,
+.doc a:focus-visible::after {
+  transform: scaleX(1);
+}
+
+.doc a:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.doc hr {
+  border: none;
+  border-top: var(--border-hairline);
+  margin: 44px 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc a::after {
+    transition: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .doc h1 {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 800px) {
+  .page {
+    padding-top: calc(var(--header-height-mobile) + var(--space-10));
+  }
+
+  .doc h1 {
+    width: auto;
+    max-width: none;
+  }
+}

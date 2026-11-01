@@ -1,0 +1,16 @@
+:root {
+  --radius-none: 0;
+  --radius-badge: 6px;
+
+  --border-hairline: 1px solid var(--line);
+  --border-hairline-strong: 1px solid var(--line-strong);
+  --border-accent: 1px solid var(--line-accent);
+  --rule-width: 1px;
+
+  --menu-bar-height: 1.5px;
+  --underline-height: 1px;
+
+  --shadow-none: none;
+  --elevation-card: none;
+  --elevation-overlay: none;
+}

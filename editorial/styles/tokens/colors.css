@@ -1,0 +1,44 @@
+:root {
+  --ink-1000: #000000;
+  --ink-950: #050505;
+  --ink-900: #080808;
+  --ink-850: #111111;
+  --ink-800: #181818;
+  --ink-700: #292929;
+
+  --paper-100: #f4f1ea;
+  --paper-050: #f5f5f3;
+  --paper-white: #f5f5f5;
+
+  --accent-600: #962a72;
+  --accent-550: #a52e7d;
+  --accent-400: #d12aa5;
+  --accent-tint-06: rgba(150, 42, 114, 0.06);
+  --accent-tint-14: rgba(150, 42, 114, 0.14);
+  --accent-line-35: rgba(150, 42, 114, 0.35);
+  --accent-line-45: rgba(150, 42, 114, 0.45);
+
+  --paper-a68: rgba(244, 241, 234, 0.68);
+  --paper-a22: rgba(244, 241, 234, 0.22);
+  --paper-a18: rgba(244, 241, 234, 0.18);
+  --paper-a08: rgba(244, 241, 234, 0.08);
+  --paper-a025: rgba(244, 241, 234, 0.025);
+  --paper-a02: rgba(244, 241, 234, 0.02);
+
+  --bg: var(--ink-950);
+  --surface-raised: var(--ink-850);
+  --surface-hover: var(--paper-a025);
+  --surface-card: transparent;
+  --text: var(--paper-100);
+  --text-muted: var(--paper-a68);
+  --text-dim: #666666;
+  --text-on-accent: var(--paper-100);
+  --text-inverse: var(--ink-950);
+  --accent: var(--accent-600);
+  --line: var(--paper-a18);
+  --line-strong: var(--paper-a22);
+  --line-accent: var(--accent-line-45);
+  --scroll-track: var(--paper-a08);
+  --scroll-thumb: var(--accent);
+  --focus-ring: var(--accent);
+}

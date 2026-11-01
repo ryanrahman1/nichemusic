@@ -1,0 +1,316 @@
+.feature {
+  display: grid;
+  grid-template-columns: minmax(320px, 480px) minmax(0, 1fr);
+  gap: var(--grid-gap-wide);
+  align-items: center;
+  margin-bottom: var(--space-14);
+  color: inherit;
+  text-decoration: none;
+}
+
+.featureArt {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.featureArt img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: var(--image-focal);
+  filter: var(--filter-photo);
+  transition: var(--transition-image);
+}
+
+.feature:hover .featureArt img {
+  transform: scale(var(--hover-image-scale));
+}
+
+.leadKicker {
+  margin: 0;
+  font-size: var(--type-ui-sm);
+  font-weight: 700;
+  letter-spacing: var(--track-overline);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.featureCopy h2 {
+  margin: var(--space-5) 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(40px, 6vw, 80px);
+  font-weight: 500;
+  letter-spacing: var(--track-statement);
+  line-height: var(--leading-tight);
+}
+
+.album {
+  margin: var(--space-4) 0 0;
+  font-family: var(--font-display);
+  font-size: var(--type-title-1);
+  font-weight: 500;
+  letter-spacing: var(--track-title);
+  line-height: var(--leading-title);
+}
+
+.featureCopy p {
+  margin: var(--space-6) 0 0;
+  max-width: 46ch;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+.score {
+  display: block;
+  margin-top: var(--space-7);
+  font-family: var(--font-display);
+  font-size: clamp(52px, 6vw, 88px);
+  font-weight: 500;
+  line-height: 0.9;
+  letter-spacing: var(--track-mega);
+  color: var(--accent);
+}
+
+.over {
+  font-size: 0.35em;
+  color: var(--text-muted);
+}
+
+.ledger {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1.4fr) minmax(0, 1.6fr) 72px 90px;
+  gap: var(--grid-gap);
+  align-items: center;
+  padding: var(--space-7) 0;
+  border-top: var(--border-hairline);
+  color: inherit;
+  text-decoration: none;
+  transition: var(--transition-tint);
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.rowArt {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.rowArt img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: var(--filter-photo);
+}
+
+.rowArtist,
+.rowAlbum {
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.4vw, 28px);
+  font-weight: 500;
+  letter-spacing: var(--track-title);
+  line-height: var(--leading-title);
+  overflow-wrap: anywhere;
+}
+
+.rowAlbum {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.rowScore {
+  font-family: var(--font-display);
+  font-size: var(--type-title-2);
+  font-weight: 500;
+  color: var(--accent);
+  text-align: right;
+}
+
+.rowDate {
+  font-size: var(--type-caption);
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.spotlightHero {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) minmax(0, 1fr);
+  gap: var(--grid-gap-wide);
+  align-items: center;
+  margin-bottom: var(--space-14);
+  color: inherit;
+  text-decoration: none;
+}
+
+.portrait {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.portrait img,
+.rosterMedia img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: var(--image-focal);
+  filter: var(--filter-photo);
+  transition: var(--transition-image);
+}
+
+.spotlightHero:hover .portrait img,
+.rosterCard:hover .rosterMedia img {
+  transform: scale(var(--hover-image-scale));
+}
+
+.spotlightHero h2 {
+  margin: var(--space-5) 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(40px, 6vw, 80px);
+  font-weight: 500;
+  letter-spacing: var(--track-statement);
+  line-height: var(--leading-tight);
+}
+
+.place {
+  margin: var(--space-4) 0 0;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+}
+
+.spotlightHero p {
+  margin: var(--space-6) 0 0;
+  max-width: 42ch;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+.roster {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--grid-gap);
+}
+
+.rosterCard {
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rosterMedia {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  margin-bottom: var(--space-6);
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.rosterName {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-title-2);
+  font-weight: 500;
+  letter-spacing: var(--track-title);
+  line-height: var(--leading-title);
+  overflow-wrap: anywhere;
+}
+
+.rosterMeta {
+  margin: var(--space-3) 0 0;
+  color: var(--text-muted);
+  font-size: var(--type-caption);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .featureArt img,
+  .portrait img,
+  .rosterMedia img {
+    transition: none;
+  }
+
+  .feature:hover .featureArt img,
+  .spotlightHero:hover .portrait img,
+  .rosterCard:hover .rosterMedia img {
+    transform: none;
+  }
+}
+
+@media (max-width: 980px) {
+  .roster {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .row {
+    grid-template-columns: 64px minmax(0, 1fr) 56px;
+    grid-template-areas:
+      "art artist score"
+      "art album date";
+  }
+
+  .rowArt {
+    grid-area: art;
+    width: 64px;
+    height: 64px;
+  }
+
+  .rowArtist {
+    grid-area: artist;
+  }
+
+  .rowAlbum {
+    grid-area: album;
+    font-size: var(--type-ui);
+  }
+
+  .rowScore {
+    grid-area: score;
+  }
+
+  .rowDate {
+    grid-area: date;
+  }
+}
+
+@media (max-width: 720px) {
+  .feature,
+  .spotlightHero {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .featureArt,
+  .portrait {
+    width: min(100%, 360px);
+  }
+}
+
+@media (max-width: 640px) {
+  .roster {
+    grid-template-columns: 1fr 1fr;
+  }
+}

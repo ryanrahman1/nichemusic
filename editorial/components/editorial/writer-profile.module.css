@@ -1,0 +1,229 @@
+.page {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: var(--grid-gap-wide);
+  padding: var(--space-15) var(--gutter);
+  border-bottom: var(--border-hairline);
+  align-items: end;
+}
+
+.portrait {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: var(--surface-raised);
+}
+
+.portrait img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: var(--image-focal);
+  filter: var(--filter-photo);
+}
+
+.initials {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-display);
+  font-size: clamp(48px, 8vw, 88px);
+  font-weight: 500;
+  letter-spacing: var(--track-display);
+  color: var(--text-muted);
+}
+
+.intro h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-display-2);
+  font-weight: 500;
+  letter-spacing: var(--track-display);
+  line-height: var(--leading-display);
+}
+
+.metaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+
+.handle {
+  font-size: var(--type-caption);
+  color: var(--text-muted);
+}
+
+.bio {
+  margin: var(--space-9) 0 var(--space-12);
+  max-width: var(--measure-copy);
+  color: var(--text-muted);
+  font-size: var(--type-body);
+  line-height: var(--leading-body);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--grid-gap);
+  border-top: var(--border-hairline);
+  padding-top: var(--space-8);
+  margin-bottom: var(--space-10);
+}
+
+.statsWide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.statLabel {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--track-overline);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.statValue {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+
+.published {
+  padding: var(--space-15) var(--gutter);
+}
+
+.kicker {
+  font-size: var(--type-caption);
+  font-weight: 700;
+  letter-spacing: var(--track-overline);
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 var(--space-10);
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 140px 1fr 70px;
+  gap: var(--grid-gap-wide);
+  align-items: baseline;
+  padding: var(--space-7) 0;
+  border-top: var(--border-hairline);
+  color: inherit;
+  text-decoration: none;
+  transition: var(--transition-tint);
+}
+
+.row:hover {
+  background: var(--surface-hover);
+}
+
+.rowType {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--track-overline);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.rowTitle {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 28px;
+  line-height: var(--leading-title);
+  letter-spacing: -0.05em;
+}
+
+.rowMeta {
+  display: block;
+  margin-top: 8px;
+  font-size: var(--type-caption);
+  color: var(--text-muted);
+}
+
+.rowScore {
+  text-align: right;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 28px;
+  letter-spacing: -0.05em;
+  color: var(--accent);
+}
+
+.empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--type-body);
+}
+
+@media (max-width: 920px) {
+  .hero {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .portrait {
+    max-width: 360px;
+  }
+
+  .stats,
+  .statsWide {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .statValue {
+    font-size: clamp(28px, 8vw, 44px);
+  }
+}
+
+@media (max-width: 720px) {
+  .hero,
+  .published {
+    padding-inline: var(--gutter-mobile);
+  }
+
+  .row {
+    grid-template-columns: 1fr 56px;
+    grid-template-areas:
+      "type score"
+      "title score";
+  }
+
+  .rowType {
+    grid-area: type;
+  }
+
+  .row > span:nth-child(2) {
+    grid-area: title;
+  }
+
+  .rowScore {
+    grid-area: score;
+    align-self: start;
+  }
+
+  .rowTitle {
+    font-size: 24px;
+  }
+}
